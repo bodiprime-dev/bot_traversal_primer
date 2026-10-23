@@ -115,6 +115,30 @@ qui marchait ; à reprendre avec un réglage (poids, horizon) plutôt que jetée
 À surveiller : à 4 500 nœuds, la course des Sentinelles se dégrade aussi avec exit_race seule
 (133 / 165 contre 142 / 152).
 
+## Essai : poids d'attaque et de piège des Sentinelles adverses (négatif)
+
+`wall_defense`, `sentinel_pressure`, `sentinel_alive` (voir `eval.rs`), chacun seul, A/B
+apparié contre la version `exit_race` (55,8 %, 400 parties, 3 600 nœuds) :
+
+| Variante | Score | Améliorées / dégradées | z | Sentinelles P / MB |
+|---|---|---|---|---|
+| référence | 55,8 % | — | — | 145 / 146 |
+| `--wall 4` | 53,6 % | 15 / 24 | −1,44 | 142 / 154 |
+| `--pressure 10` | 55,1 % | 56 / 58 | −0,19 | 142 / 141 |
+| `--pressure 25` | 54,2 % | 66 / 72 | −0,51 | 149 / 141 |
+| `--alive 40` | 54,9 % | 49 / 52 | −0,30 | 137 / 146 |
+| `--alive 100` | 50,9 % | 51 / 70 | −1,73 | 129 / 163 |
+
+Aucun gain : les trois restent à 0. Lecture : `alive` fort rend Piolet frileux avec sa propre
+Sentinelle (course perdue plus souvent) ; `wall` ne touche que 39 parties (les lignes défendues
+sont rares) et pénalise aussi notre propre Sentinelle face aux leurs.
+
+Piste non testée : le problème est peut-être dans la recherche, pas dans l'évaluation. Le tri
+des coups calmes (SDK, `ordered`) ne regarde que l'avancée vers la sortie ; avec le faisceau
+(10 coups calmes par nœud, 16 à la racine), un coup qui barre le chemin de la Sentinelle
+adverse sans avancer peut n'être jamais examiné. Mont Blanc ajoute ces parades à la racine
+(`guard_squares`, `guard_extra`) ; pas Piolet.
+
 ## Prochaine étape : évaluation par poids d'actions
 
 Remplacer `Ctx::evaluate` par notre fonction, avec une structure de poids réglable, par exemple :
