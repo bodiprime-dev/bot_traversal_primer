@@ -75,8 +75,8 @@ struct Game {
     exits: Vec<Exit>,
 }
 
-fn play(board: [u8; 100], piolet_side: u8, nodes: u64, weights: Weights) -> Game {
-    let mut bot = Piolet::new(Config { weights, ..Config::default() });
+fn play(board: [u8; 100], piolet_side: u8, nodes: u64, weights: Weights, guard: (usize, usize)) -> Game {
+    let mut bot = Piolet::new(Config { weights, guard_root: guard.0, guard_tree: guard.1, ..Config::default() });
     let mut s = new_game(board);
     let mut exits = Vec::new();
     while !s.over {
@@ -136,6 +136,7 @@ fn main() {
         sentinel_alive: arg(&args, "--alive", Weights::default().sentinel_alive as u64) as i32,
         ..Weights::default()
     };
+    let guard = (arg(&args, "--guard-root", 0) as usize, arg(&args, "--guard-tree", 0) as usize);
     let boards = boards();
 
     let next = AtomicUsize::new(0);
@@ -148,7 +149,7 @@ fn main() {
                     break;
                 }
                 let side = if g % 2 == 0 { 1 } else { 2 };
-                let game = Game { index: g, ..play(boards[(g / 2) % boards.len()], side, nodes, weights) };
+                let game = Game { index: g, ..play(boards[(g / 2) % boards.len()], side, nodes, weights, guard) };
                 done.lock().unwrap().push(game);
             });
         }
@@ -175,6 +176,7 @@ fn main() {
     let results: Vec<i32> = all.iter().map(|g| g.result).collect();
     let score = (results.iter().filter(|&&r| r == 1).count() as f64 + 0.5 * results.iter().filter(|&&r| r == 0).count() as f64)
         / all.len() as f64;
+    println!("parades : {} à la racine, {} par nœud", guard.0, guard.1);
     println!(
         "Piolet ({nodes} nœuds, start_race {} / exit_race {} / spread {} + d/{} / wall {} / pressure {} / alive {}) contre Mont Blanc : {} parties",
         weights.start_race,

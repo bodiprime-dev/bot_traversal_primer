@@ -128,6 +128,43 @@ impl Eval {
         (cost + m - 1) / m
     }
 
+    /// Cases de parade contre `them` : celles d'un plus court chemin (relief seul) de sa
+    /// Sentinelle la plus proche de la sortie (à défaut, de sa pièce la plus rapide) ; s'y
+    /// placer la ralentit ou la force au détour. Une case est sur un plus court chemin si
+    /// (coureur → case) + (case → sortie) = (coureur → sortie).
+    pub fn guard_squares(&self, state: &State, them: u8) -> [bool; SQUARES] {
+        let mut out = [false; SQUARES];
+        let turns = |p: &&Piece| Eval::turns_for(self.cost(p.owner, p.sq), p.kind);
+        let theirs = || state.pieces().iter().filter(|p| p.owner == them);
+        let Some(runner) = theirs().filter(|p| p.kind == Kind::Sentinel).min_by_key(turns).or_else(|| theirs().min_by_key(turns))
+        else {
+            return out;
+        };
+        let mut from = [u16::MAX; SQUARES];
+        let mut heap = BinaryHeap::new();
+        from[runner.sq as usize] = 0;
+        heap.push(Reverse((0u16, runner.sq)));
+        while let Some(Reverse((d, cur))) = heap.pop() {
+            if d > from[cur as usize] {
+                continue;
+            }
+            for &nb in neighbors_of(cur) {
+                let nd = d + step_cost(&state.heights, cur, nb) as u16;
+                if nd < from[nb as usize] {
+                    from[nb as usize] = nd;
+                    heap.push(Reverse((nd, nb)));
+                }
+            }
+        }
+        let total = self.cost(them, runner.sq);
+        for sq in 0..SQUARES {
+            if sq != runner.sq as usize && from[sq] != u16::MAX && from[sq] as i32 + self.cost(them, sq as u8) == total {
+                out[sq] = true;
+            }
+        }
+        out
+    }
+
     /// Défense d'une pièce (R7.4) : sa Force + 1 par allié voisin.
     fn defense(state: &State, p: &Piece) -> i32 {
         let allies = neighbors_of(p.sq)
@@ -554,6 +591,17 @@ mod sentinel_tests {
         // Sans piège : à travers l'Avant-garde (5 + 2 pour l'abattre). Avec : détour par la
         // colonne 2 (8).
         assert_eq!((open, trap), (7, 8));
+    }
+
+    #[test]
+    fn guard_squares_follow_the_enemy_sentinel_shortest_path() {
+        // Sur le plat, la Sentinelle bleue en 45 descend tout droit : 35, 25, 15, 5. Elle est
+        // préférée à l'Explorateur bleu, pourtant plus rapide.
+        let pieces = [piece(1, Kind::Vanguard, 90), piece(2, Kind::Sentinel, 45), piece(2, Kind::Explorer, 18)];
+        let s = State::new(FLAT, &pieces, 1, 20, [0, 0], 0, 200);
+        let g = Eval::new(&FLAT, Weights::default()).guard_squares(&s, 2);
+        let on: Vec<usize> = (0..SQUARES).filter(|&q| g[q]).collect();
+        assert_eq!(on, vec![5, 15, 25, 35]);
     }
 
     #[test]

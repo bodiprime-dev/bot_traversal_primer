@@ -31,11 +31,17 @@ pub struct Config {
     pub beam: usize,
     /// Poids de l'évaluation.
     pub weights: Weights,
+    /// Coups de parade (vers une case d'un plus court chemin de la Sentinelle adverse, voir
+    /// `Eval::guard_squares`) examinés en plus du faisceau : à la racine, et à chaque nœud de
+    /// profondeur ≥ 2 (un Dijkstra de plus par nœud). Le tri des coups calmes ne regarde que
+    /// l'avancée : sans ça, une parade qui n'avance pas est élaguée avant d'être vue.
+    pub guard_root: usize,
+    pub guard_tree: usize,
 }
 
 impl Default for Config {
     fn default() -> Config {
-        Config { max_depth: 16, beam: 10, weights: Weights::default() }
+        Config { max_depth: 16, beam: 10, weights: Weights::default(), guard_root: 0, guard_tree: 0 }
     }
 }
 
@@ -179,13 +185,25 @@ impl Search<'_> {
         let mut best = Pick { index: root[0].1, depth: 0, score: 0, nodes: 0 };
         let mut best_mv = root[0].0;
         let beam = self.owner.cfg.beam;
+        // Parades hors faisceau qui restent examinées à toutes les itérations.
+        let guards: Vec<Move> = if self.owner.cfg.guard_root > 0 {
+            let squares = self.eval.guard_squares(state, if state.to_move == 1 { 2 } else { 1 });
+            root.iter()
+                .skip(beam + 6)
+                .map(|&(m, _)| m)
+                .filter(|m| m.kind == MoveKind::Move && squares[m.to as usize])
+                .take(self.owner.cfg.guard_root)
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         'deepen: for depth in 1..=self.owner.cfg.max_depth {
             let mut scored: Vec<(i32, (Move, usize))> = Vec::with_capacity(root.len());
             let mut alpha = -INF;
             for (n, &(m, idx)) in root.iter().enumerate() {
                 // Au-delà du faisceau, un coup calme n'est essayé qu'aux premières itérations.
-                if n >= beam && depth > 2 && m.kind == MoveKind::Move && n >= beam + 6 {
+                if n >= beam && depth > 2 && m.kind == MoveKind::Move && n >= beam + 6 && !guards.contains(&m) {
                     scored.push((-INF, (m, idx)));
                     continue;
                 }
@@ -284,13 +302,21 @@ impl Search<'_> {
             }
         }
 
+        let guard_tree = self.owner.cfg.guard_tree;
+        let squares = (guard_tree > 0 && depth >= 2)
+            .then(|| self.eval.guard_squares(state, if state.to_move == 1 { 2 } else { 1 }));
         let (mut best, mut best_move) = (-INF, None);
-        let mut quiet = 0usize;
+        let (mut quiet, mut guarded) = (0usize, 0usize);
         for (n, m) in moves.iter().enumerate() {
             if m.kind == MoveKind::Move {
-                // Coups calmes : seuls les `beam` premiers (hors coup de la table) sont explorés.
+                // Coups calmes : seuls les `beam` premiers (hors coup de la table) sont explorés,
+                // plus `guard_tree` parades.
                 if n > 0 && quiet >= self.owner.cfg.beam {
-                    continue;
+                    if guarded < guard_tree && squares.is_some_and(|s| s[m.to as usize]) {
+                        guarded += 1;
+                    } else {
+                        continue;
+                    }
                 }
                 quiet += 1;
             }
