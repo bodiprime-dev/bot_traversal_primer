@@ -74,13 +74,16 @@ struct Game {
     result: i32,
     reason: &'static str,
     exits: Vec<Exit>,
+    /// Sentinelles capturées : (de Piolet, de Mont Blanc).
+    sentinels_lost: (usize, usize),
 }
 
 /// Stratégie « Sprinteur » (`--sprint 1`) : sortir la Sentinelle dès que possible, sinon le
 /// coup de Sentinelle qui réduit le plus ses tours restants (distance exacte, puis coût sur le
 /// relief) ; `None` si aucun ne la rapproche (la recherche de Piolet reprend la main).
 fn sprint_move(s: &State, moves: &[Move], turns: &[u8; 100], cost: &[u16; 100]) -> Option<Move> {
-    let sentinel = |m: &&Move| s.piece(m.piece).kind == Kind::Sentinel;
+    // `Pass` n'a pas de pièce (indice 255) : l'écarter avant `s.piece`.
+    let sentinel = |m: &&Move| m.kind != MoveKind::Pass && s.piece(m.piece).kind == Kind::Sentinel;
     if let Some(m) = moves.iter().filter(sentinel).find(|m| m.kind == MoveKind::Exit) {
         return Some(*m);
     }
@@ -119,7 +122,15 @@ fn play(board: [u8; 100], piolet_side: u8, nodes: u64, cfg: Config, sprint: bool
         Some(w) if w == piolet_side => 1,
         Some(_) => -1,
     };
-    Game { index: 0, result, reason: s.reason.map_or("?", |r| r.name()), exits }
+    // Sentinelles ni sur le plateau ni sorties : capturées.
+    let lost = |piolet: bool| {
+        let owner = if piolet { piolet_side } else { 3 - piolet_side };
+        let on_board = s.pieces().iter().filter(|p| p.owner == owner && p.kind == Kind::Sentinel).count();
+        let out = exits.iter().filter(|e| e.piolet == piolet && e.kind == Kind::Sentinel).count();
+        2 - on_board - out
+    };
+    let sentinels_lost = (lost(true), lost(false));
+    Game { index: 0, result, reason: s.reason.map_or("?", |r| r.name()), exits, sentinels_lost }
 }
 
 fn arg(args: &[String], name: &str, default: u64) -> u64 {
@@ -197,7 +208,7 @@ fn main() {
                     .iter()
                     .map(|e| format!("{}:{}@{}", if e.piolet { "P" } else { "M" }, &kind_name(e.kind)[..1], e.ply))
                     .collect();
-                format!("{:>3} {:>2} {:<10} {}", g.index, g.result, g.reason, exits.join(" "))
+                format!("{:>3} {:>2} {:<10} {} perdues:{}/{}", g.index, g.result, g.reason, exits.join(" "), g.sentinels_lost.0, g.sentinels_lost.1)
             })
             .collect();
         std::fs::write(path, lines.join("\n") + "\n").expect("écriture de --list");
