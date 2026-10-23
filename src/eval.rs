@@ -79,6 +79,12 @@ pub struct Weights {
     /// (Une Sentinelle capturable par le camp au trait, elle, est vue : la recherche de calme
     /// joue la prise.)
     pub sentinel_threat: i32,
+    /// Course en temps (personne n'est sorti) : par demi-coup d'avance de notre meilleure
+    /// Sentinelle sur la meilleure adverse (tours restants, blocages compris, trait inclus),
+    /// borné à ± `tempo_cap` demi-coups. Linéaire : chaque temps perdu ou gagné compte, partout
+    /// (la course du SDK, `sentinel_race`, est un tout ou rien à 5 tours de la sortie).
+    pub tempo_race: i32,
+    pub tempo_cap: i32,
 }
 
 impl Default for Weights {
@@ -115,6 +121,8 @@ impl Weights {
             sentinel_alive: 0,
             exact_turns: false,
             sentinel_threat: 0,
+            tempo_race: 0,
+            tempo_cap: 6,
         }
     }
 }
@@ -460,6 +468,17 @@ impl Eval {
                 two[o][1] = t;
             }
         }
+        if w.tempo_race != 0 && nobody_out {
+            let mine = Eval::plies(state, side, sentinel[side as usize - 1]);
+            let theirs = Eval::plies(state, other, sentinel[other as usize - 1]);
+            let margin = match (mine, theirs) {
+                (i32::MAX, i32::MAX) => 0,
+                (i32::MAX, _) => -w.tempo_cap,
+                (_, i32::MAX) => w.tempo_cap,
+                _ => (theirs - mine).clamp(-w.tempo_cap, w.tempo_cap),
+            };
+            total += w.tempo_race * margin;
+        }
         if w.sentinel_threat != 0 {
             let mover = state.to_move;
             let threatened = state
@@ -799,6 +818,21 @@ mod sentinel_tests {
         assert!(!e.capturable(&s, s.pieces()[1]));
         assert!(e.hunts(&s, &to(56)));
         assert!(!e.hunts(&s, &to(69)));
+    }
+
+    #[test]
+    fn tempo_race_counts_every_half_move() {
+        let e = Eval::new(&FLAT, Weights { tempo_race: 10, ..nothing() });
+        // Sentinelle rouge rangée 5 (coût 5 : 2 tours), bleue rangée 4 (coût 5 : 2 tours).
+        // Rouge au trait : 3 demi-coups contre 4, +1 pour Rouge.
+        let pieces = [piece(1, Kind::Sentinel, 57), piece(2, Kind::Sentinel, 42)];
+        let s = State::new(FLAT, &pieces, 1, 20, [0, 0], 0, 200);
+        assert_eq!(e.evaluate(&s, 1), 10);
+        assert_eq!(e.evaluate(&s, 2), -10);
+        // Sentinelle bleue rangée 7 (3 tours) : 3 contre 6 demi-coups, +3.
+        let pieces = [piece(1, Kind::Sentinel, 57), piece(2, Kind::Sentinel, 72)];
+        let s = State::new(FLAT, &pieces, 1, 20, [0, 0], 0, 200);
+        assert_eq!(e.evaluate(&s, 1), 30);
     }
 
     #[test]
