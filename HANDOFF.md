@@ -208,6 +208,37 @@ Conséquence méthodologique : un écart de ±3 points entre deux runs de 400 pa
 Pour départager deux réglages proches, cumuler plusieurs budgets (comme pour exit_race) ou
 plus de cartes.
 
+## Stratégie : ce que disent les parties
+
+- **Les 200 cartes sont symétriques** (`examples/openings.rs`) : mêmes distances pour les deux
+  camps ; la seule asymétrie est le trait (Rouge gagne 164 courses de Sentinelles, Bleu 127).
+- **La Sentinelle pourrait sortir en 4 à 6 tours** (90 % des cartes), mais la gagnante arrive
+  avec 6 tours de retard en médiane : aucun des deux bots ne mène de vrai sprint.
+- **Le sprint pur échoue** (`--sprint 1` : 2 V / 38 D sur 40) : 53 Sentinelles capturées
+  (Piolet normal : 8). Seule, une Sentinelle (défense 3) est prise par une Sentinelle ou une
+  Avant-garde soutenue ; chaque allié au contact lui donne +1 en défense. Le jeu est une course
+  en convoi, pas un sprint.
+
+## Faisceau de 20 coups calmes (validé, par défaut)
+
+| Coups calmes par nœud | 6 | 10 | 14 | 20 | illimité |
+|---|---|---|---|---|---|
+| 3 600 nœuds | 42,8 % | 55,8 % | 60,1 % | **69,1 %** (z +4,0) | 60,9 % |
+| 3 000 nœuds | 41,1 % | 53,5 % | 67,0 % | **69,9 %** (z +4,5) | 60,4 % |
+
+Le tri des coups calmes (SDK) ne regarde que l'avancée vers la sortie : à 10, les coups
+d'escorte et de défense n'étaient jamais examinés. Au-delà de 20, la recherche se disperse.
+
+## Menace réelle et chasse (neutres avec le faisceau de 20)
+
+- `sentinel_threat` (pénalité du camp au trait par Sentinelle capturable, `Eval::capturable`
+  sur les coups du moteur) : 50 → 67,5 % (72 / 80), 150 → 65,9 % (70 / 83), contre 69,1 %.
+- `Config::hunt` (coups qui rendent une Sentinelle adverse capturable, protégés de l'élagage) :
+  2 → 69,5 % (57 / 55), 4 → 68,8 % (63 / 64).
+
+Laissés à 0 : avec un faisceau assez large, la recherche voit déjà ces coups ; le budget étant
+compté en nœuds en natif, ce n'est pas une question de coût.
+
 ## Prochaine étape : évaluation par poids d'actions
 
 Remplacer `Ctx::evaluate` par notre fonction, avec une structure de poids réglable, par exemple :
