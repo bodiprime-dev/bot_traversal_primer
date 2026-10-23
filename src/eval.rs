@@ -707,6 +707,7 @@ mod race_tests {
         Weights {
             start_race: 400,
             exit_race: 400,
+            tempo_race: 0,
             strength: 0,
             progress_base: 0,
             progress_per_strength: 0,
