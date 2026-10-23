@@ -750,6 +750,50 @@ mod distance_tests {
         }
     }
 
+    /// Vérité terrain : une pièce seule sur le plateau, parcours en largeur sur les vrais coups
+    /// légaux du moteur (`legal_moves`) jusqu'à sa sortie. Doit coïncider avec la table.
+    #[test]
+    fn exact_turns_matches_the_engine() {
+        use traversal_bot::core::{apply_move, legal_moves, MoveKind, Piece};
+        let mut checked = 0;
+        for heights in boards().into_iter().step_by(20) {
+            for owner in [1u8, 2] {
+                for kind in KINDS {
+                    let table = exact_turns(&heights, owner, kind);
+                    for sq in (0..SQUARES as u8).step_by(7) {
+                        let mut seen = [false; SQUARES];
+                        seen[sq as usize] = true;
+                        let (mut frontier, mut turns) = (vec![sq], 0u8);
+                        let truth = 'bfs: loop {
+                            turns += 1;
+                            let mut next = Vec::new();
+                            for &from in &frontier {
+                                let s = State::new(heights, &[Piece { owner, kind, sq: from }], owner, 0, [0, 0], 0, 200);
+                                for m in legal_moves(&s) {
+                                    if m.kind == MoveKind::Exit {
+                                        break 'bfs turns;
+                                    }
+                                    let to = apply_move(&s, &m).pieces()[0].sq;
+                                    if !seen[to as usize] {
+                                        seen[to as usize] = true;
+                                        next.push(to);
+                                    }
+                                }
+                            }
+                            if next.is_empty() {
+                                break u8::MAX;
+                            }
+                            frontier = next;
+                        };
+                        assert_eq!(table[sq as usize], truth, "{kind:?} camp {owner} case {sq}");
+                        checked += 1;
+                    }
+                }
+            }
+        }
+        assert!(checked > 500);
+    }
+
     /// Mesure (`cargo test --release -- --ignored --nocapture ecart`) : écart entre tours exacts
     /// et `ceil(coût / M)`, sur toutes les cases des 200 cartes.
     #[test]
