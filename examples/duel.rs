@@ -134,6 +134,7 @@ fn main() {
         wall_defense: arg(&args, "--wall", Weights::default().wall_defense as u64) as i32,
         sentinel_pressure: arg(&args, "--pressure", Weights::default().sentinel_pressure as u64) as i32,
         sentinel_alive: arg(&args, "--alive", Weights::default().sentinel_alive as u64) as i32,
+        exact_turns: arg(&args, "--exact", Weights::default().exact_turns as u64) != 0,
         ..Weights::default()
     };
     let guard = (arg(&args, "--guard-root", 0) as usize, arg(&args, "--guard-tree", 0) as usize);
@@ -176,7 +177,7 @@ fn main() {
     let results: Vec<i32> = all.iter().map(|g| g.result).collect();
     let score = (results.iter().filter(|&&r| r == 1).count() as f64 + 0.5 * results.iter().filter(|&&r| r == 0).count() as f64)
         / all.len() as f64;
-    println!("parades : {} à la racine, {} par nœud", guard.0, guard.1);
+    println!("parades : {} à la racine, {} par nœud ; tours exacts : {}", guard.0, guard.1, weights.exact_turns);
     println!(
         "Piolet ({nodes} nœuds, start_race {} / exit_race {} / spread {} + d/{} / wall {} / pressure {} / alive {}) contre Mont Blanc : {} parties",
         weights.start_race,

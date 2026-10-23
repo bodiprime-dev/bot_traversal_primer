@@ -67,6 +67,10 @@ pub struct Weights {
     /// Valeur d'une Sentinelle encore sur le plateau, en plus de sa Force : prendre la leur,
     /// protéger la nôtre.
     pub sentinel_alive: i32,
+    /// Tours pour sortir calculés exactement (`exact_turns` : la marche ne se coupe pas entre
+    /// deux tours, coups spéciaux de l'Explorateur) au lieu de `ceil(coût / Mouvement)`. Le
+    /// blocage par les pièces s'y ajoute en tours supplémentaires.
+    pub exact_turns: bool,
 }
 
 impl Default for Weights {
@@ -101,20 +105,103 @@ impl Weights {
             wall_defense: 0,
             sentinel_pressure: 0,
             sentinel_alive: 0,
+            exact_turns: false,
         }
     }
+}
+
+/// Coût de marche minimal depuis `from` vers chaque case, borné à `budget` (`u8::MAX` au-delà) :
+/// ce qu'une pièce atteint en un tour sur le relief seul (R4).
+fn walk(heights: &[u8; SQUARES], from: u8, budget: u8) -> [u8; SQUARES] {
+    let mut dist = [u8::MAX; SQUARES];
+    dist[from as usize] = 0;
+    // Coûts ≤ 5 : une file par coût suffit (comme `movegen::reach`).
+    let mut buckets: [Vec<u8>; 6] = Default::default();
+    buckets[0].push(from);
+    for d in 0..=budget as usize {
+        let mut k = 0;
+        while k < buckets[d].len() {
+            let cur = buckets[d][k];
+            k += 1;
+            if dist[cur as usize] as usize != d {
+                continue;
+            }
+            for &nb in neighbors_of(cur) {
+                let nd = d + step_cost(heights, cur, nb) as usize;
+                if nd <= budget as usize && nd < dist[nb as usize] as usize {
+                    dist[nb as usize] = nd as u8;
+                    buckets[nd].push(nb);
+                }
+            }
+        }
+    }
+    dist
+}
+
+/// Tours minimaux pour sortir depuis chaque case, pour une pièce `kind` de `owner`, sur le
+/// relief seul : exacts, là où `ceil(coût / Mouvement)` se trompe (une marche ne se coupe pas
+/// entre deux tours, et l'Explorateur a ses diagonales et ses bonds qui ignorent la hauteur).
+///
+/// - 1 tour si la pièce atteint la dernière rangée en marchant avec au moins 1 point de
+///   Mouvement restant pour sortir (R6) ;
+/// - sinon 1 + le minimum sur les cases atteignables en un tour (marche de coût ≤ Mouvement,
+///   ou coup spécial de l'Explorateur, R5).
+///
+/// `u8::MAX` : sortie impossible.
+pub fn exact_turns(heights: &[u8; SQUARES], owner: u8, kind: Kind) -> [u8; SQUARES] {
+    let budget = kind.movement();
+    let exit_row = if owner == 1 { SIZE - 1 } else { 0 };
+    let mut turns = [u8::MAX; SQUARES];
+    let mut next: Vec<Vec<u8>> = Vec::with_capacity(SQUARES);
+    for sq in 0..SQUARES as u8 {
+        let dist = walk(heights, sq, budget);
+        if (0..SIZE).any(|x| (dist[exit_row * SIZE + x] as u16) < budget as u16) {
+            turns[sq as usize] = 1;
+        }
+        let mut out: Vec<u8> = (0..SQUARES as u8).filter(|&s| s != sq && dist[s as usize] != u8::MAX).collect();
+        if kind == Kind::Explorer {
+            let (x, y) = ((sq as usize % SIZE) as i32, (sq as usize / SIZE) as i32);
+            for (dx, dy) in [(1, 1), (1, -1), (-1, 1), (-1, -1), (0, 2), (2, 0), (0, -2), (-2, 0)] {
+                let (nx, ny) = (x + dx, y + dy);
+                if (0..SIZE as i32).contains(&nx) && (0..SIZE as i32).contains(&ny) {
+                    out.push((ny * SIZE as i32 + nx) as u8);
+                }
+            }
+        }
+        next.push(out);
+    }
+    // Relaxation jusqu'au point fixe (au plus une dizaine de passes sur 10 × 10).
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for sq in 0..SQUARES {
+            let best = next[sq].iter().map(|&s| turns[s as usize]).min().unwrap_or(u8::MAX);
+            if best != u8::MAX && best + 1 < turns[sq] {
+                turns[sq] = best + 1;
+                changed = true;
+            }
+        }
+    }
+    turns
 }
 
 /// Données fixes pendant un coup : le relief ne change pas, les coûts de sortie « relief
 /// seul » se calculent une fois.
 pub struct Eval {
     costs: [[u16; SQUARES]; 2],
+    /// `exact[camp][type][case]` (types : Explorateur, Avant-garde, Sentinelle), si
+    /// `exact_turns`.
+    exact: Option<Box<[[[u8; SQUARES]; 3]; 2]>>,
     w: Weights,
 }
 
 impl Eval {
     pub fn new(heights: &[u8; SQUARES], w: Weights) -> Eval {
-        Eval { costs: [exit_costs(heights, 1), exit_costs(heights, 2)], w }
+        let exact = w.exact_turns.then(|| {
+            let table = |o| [Kind::Explorer, Kind::Vanguard, Kind::Sentinel].map(|k| exact_turns(heights, o, k));
+            Box::new([table(1), table(2)])
+        });
+        Eval { costs: [exit_costs(heights, 1), exit_costs(heights, 2)], exact, w }
     }
 
     #[inline]
@@ -235,7 +322,18 @@ impl Eval {
             let free = self.cost(p.owner, p.sq);
             let with = (blocked[p.owner as usize - 1][p.sq as usize] as i32).min(free + w.detour as i32);
             let cost = (free * (100 - w.blend) + with * w.blend + 50) / 100;
-            out[i] = Eval::turns_for(cost, p.kind);
+            out[i] = match &self.exact {
+                None => Eval::turns_for(cost, p.kind),
+                Some(exact) => {
+                    let k = p.kind.strength() as usize - 1; // Explorateur 0, Avant-garde 1, Sentinelle 2
+                    let base = match exact[p.owner as usize - 1][k][p.sq as usize] {
+                        u8::MAX => 99,
+                        t => t as i32,
+                    };
+                    // Les pièces sur le chemin : tours en plus par rapport au relief seul.
+                    base + (Eval::turns_for(cost, p.kind) - Eval::turns_for(free, p.kind)).max(0)
+                }
+            };
         }
         out
     }
@@ -617,5 +715,65 @@ mod sentinel_tests {
         let pieces = [piece(1, Kind::Vanguard, 54), piece(1, Kind::Vanguard, 56), piece(2, Kind::Sentinel, 55)];
         let s = State::new(FLAT, &pieces, 1, 20, [0, 0], 0, 200);
         assert_eq!(e.evaluate(&s, 1), 30);
+    }
+}
+
+#[cfg(test)]
+mod distance_tests {
+    use super::*;
+    use crate::boards;
+
+    const KINDS: [Kind; 3] = [Kind::Explorer, Kind::Vanguard, Kind::Sentinel];
+
+    /// Sans coup spécial, on ne dépense pas plus de M par tour : le calcul exact ne descend
+    /// jamais sous `ceil(coût / M)`. Et sur le plat, les deux coïncident (rangées + 1 de coût).
+    #[test]
+    fn exact_turns_is_a_tighter_bound() {
+        for heights in boards() {
+            for owner in [1, 2] {
+                let cost = exit_costs(&heights, owner);
+                for kind in [Kind::Vanguard, Kind::Sentinel] {
+                    let exact = exact_turns(&heights, owner, kind);
+                    for sq in 0..SQUARES {
+                        assert!(exact[sq] as i32 >= Eval::turns_for(cost[sq] as i32, kind), "case {sq}");
+                    }
+                }
+            }
+        }
+        let flat = [1; SQUARES];
+        for kind in KINDS {
+            let exact = exact_turns(&flat, 1, kind);
+            let cost = exit_costs(&flat, 1);
+            for sq in 0..SQUARES {
+                assert_eq!(exact[sq] as i32, Eval::turns_for(cost[sq] as i32, kind), "{kind:?} case {sq}");
+            }
+        }
+    }
+
+    /// Mesure (`cargo test --release -- --ignored --nocapture ecart`) : écart entre tours exacts
+    /// et `ceil(coût / M)`, sur toutes les cases des 200 cartes.
+    #[test]
+    #[ignore]
+    fn ecart_distance() {
+        for kind in KINDS {
+            let mut hist = std::collections::BTreeMap::<i32, usize>::new();
+            let mut start = std::collections::BTreeMap::<i32, usize>::new();
+            for heights in boards() {
+                for owner in [1u8, 2] {
+                    let exact = exact_turns(&heights, owner, kind);
+                    let cost = exit_costs(&heights, owner);
+                    for sq in 0..SQUARES {
+                        *hist.entry(exact[sq] as i32 - Eval::turns_for(cost[sq] as i32, kind)).or_default() += 1;
+                    }
+                    // Cases de départ (colonnes 2 à 7 de la rangée de départ).
+                    let row = if owner == 1 { 0 } else { SIZE - 1 };
+                    for x in 2..8 {
+                        let sq = row * SIZE + x;
+                        *start.entry(exact[sq] as i32 - Eval::turns_for(cost[sq] as i32, kind)).or_default() += 1;
+                    }
+                }
+            }
+            eprintln!("{kind:?} : exact - ceil(coût/M) sur toutes les cases {hist:?} ; au départ {start:?}");
+        }
     }
 }
