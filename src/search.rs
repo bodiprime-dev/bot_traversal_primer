@@ -5,12 +5,15 @@
 //!  - recherche de calme (captures et sorties) à l'horizon,
 //!  - arrêt piloté par l'appelant (`stop`), car il n'y a pas d'horloge en WebAssembly.
 //!
-//! L'évaluation est celle du moteur du SDK (`Ctx::evaluate`, niveau de compréhension 3).
+//! L'évaluation est la nôtre (`eval.rs`, réglée par `Weights`) ; le tri des coups est encore
+//! celui du SDK (`Ctx::ordered`).
 
 use std::cmp::Reverse;
 
 use traversal_bot::core::bot::WIN;
 use traversal_bot::core::{apply_move, Ctx, Kind, Move, MoveKind, State, Tuning};
+
+use crate::eval::{Eval, Weights};
 
 const INF: i32 = 1_000_000_000;
 /// Profondeur max de la recherche de calme (captures / sorties enchaînées).
@@ -26,11 +29,13 @@ pub struct Config {
     /// Coups « calmes » explorés par nœud, en plus des captures et sorties (toujours toutes
     /// explorées). `usize::MAX` : pas d'élagage.
     pub beam: usize,
+    /// Poids de l'évaluation.
+    pub weights: Weights,
 }
 
 impl Default for Config {
     fn default() -> Config {
-        Config { max_depth: 16, beam: 10 }
+        Config { max_depth: 16, beam: 10, weights: Weights::default() }
     }
 }
 
@@ -133,7 +138,8 @@ impl Piolet {
             return none;
         }
         let ctx = Ctx::with_insight(&state.heights, 3, Tuning::default());
-        let mut s = Search { owner: self, ctx: &ctx, stop, nodes: 0 };
+        let eval = Eval::new(&state.heights, self.cfg.weights);
+        let mut s = Search { owner: self, ctx: &ctx, eval: &eval, stop, nodes: 0 };
         s.root(state, moves)
     }
 }
@@ -141,6 +147,7 @@ impl Piolet {
 struct Search<'a> {
     owner: &'a mut Piolet,
     ctx: &'a Ctx,
+    eval: &'a Eval,
     stop: fn() -> bool,
     nodes: u64,
 }
@@ -242,7 +249,7 @@ impl Search<'_> {
 
     fn negamax(&mut self, state: &State, depth: u8, mut alpha: i32, mut beta: i32) -> Result<i32, Timeout> {
         if state.over {
-            return Ok(self.ctx.evaluate(state, state.to_move));
+            return Ok(self.eval.evaluate(state, state.to_move));
         }
         if depth == 0 {
             return self.quiesce(state, alpha, beta, QPLIES);
@@ -324,7 +331,7 @@ impl Search<'_> {
     /// Au bout de l'horizon : on poursuit les captures et les sorties jusqu'au calme. Le camp
     /// au trait peut « ne rien faire » : son évaluation sur place sert de plancher.
     fn quiesce(&mut self, state: &State, mut alpha: i32, beta: i32, plies: u8) -> Result<i32, Timeout> {
-        let stand = self.ctx.evaluate(state, state.to_move);
+        let stand = self.eval.evaluate(state, state.to_move);
         if state.over || plies == 0 || stand >= beta {
             return Ok(stand);
         }

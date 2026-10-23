@@ -9,6 +9,7 @@
 //! # -> target/wasm32-unknown-unknown/release/piolet.wasm
 //! ```
 
+pub mod eval;
 pub mod search;
 
 use std::cell::RefCell;
