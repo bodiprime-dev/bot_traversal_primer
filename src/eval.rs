@@ -19,7 +19,7 @@ use traversal_bot::core::bot::{exit_costs, WIN};
 use traversal_bot::core::config::{SIZE, SQUARES};
 use traversal_bot::core::movegen::{neighbors_of, piece_moves, step_cost};
 use traversal_bot::core::state::MAX_PIECES;
-use traversal_bot::core::{Kind, Move, MoveKind, Piece, State};
+use traversal_bot::core::{apply_move, Kind, Move, MoveKind, Piece, State};
 
 /// Poids de l'évaluation. `Weights::sdk()` reproduit l'évaluation du SDK (`Tuning::default()`
 /// et les constantes en dur de `Ctx::evaluate`) ; `Weights::default()` y ajoute la course à
@@ -284,6 +284,29 @@ impl Eval {
             }
         }
         false
+    }
+
+    /// Coup de chasse : un coup calme après lequel une Sentinelle adverse devient capturable
+    /// par le camp qui le joue (la pièce déplacée attaque ou vient soutenir une attaque).
+    /// Filtre d'abord sur la distance : la destination doit être à portée de la Sentinelle.
+    pub fn hunts(&self, state: &State, m: &Move) -> bool {
+        if m.kind != MoveKind::Move {
+            return false;
+        }
+        let mover = state.to_move;
+        let reach = state.piece(m.piece).kind.movement() as i32;
+        let (x, y) = ((m.to as usize % SIZE) as i32, (m.to as usize / SIZE) as i32);
+        let near = |p: &Piece| {
+            let (px, py) = ((p.sq as usize % SIZE) as i32, (p.sq as usize / SIZE) as i32);
+            p.owner != mover && p.kind == Kind::Sentinel && (px - x).abs() + (py - y).abs() <= reach
+        };
+        if !state.pieces().iter().any(near) {
+            return false;
+        }
+        let child = apply_move(state, m);
+        let hunted = child.pieces().iter().filter(|p| p.owner != mover && p.kind == Kind::Sentinel).any(|p| self.capturable(&child, *p));
+        // Déjà capturable avant le coup : ce n'est pas lui qui crée la menace.
+        hunted && !state.pieces().iter().filter(|p| p.owner != mover && p.kind == Kind::Sentinel).any(|p| self.capturable(state, *p))
     }
 
     /// Défense d'une pièce (R7.4) : sa Force + 1 par allié voisin.
@@ -761,6 +784,21 @@ mod sentinel_tests {
         let pieces = [piece(1, Kind::Sentinel, 5), piece(2, Kind::Sentinel, 95)];
         let red = State::new(FLAT, &pieces, 1, 20, [0, 0], 0, 200);
         assert_eq!(e.evaluate(&red, 1), 0);
+    }
+
+    #[test]
+    fn a_hunting_move_creates_a_threat_on_the_enemy_sentinel() {
+        use traversal_bot::core::{legal_moves, MoveKind};
+        let e = Eval::new(&FLAT, Weights::default());
+        // Sentinelle rouge en 59 : la bleue (55) est hors de portée (3 de marche + 1 pour
+        // attaquer > 3). Aller en 56 la met au contact : 3 contre 3, capturable au coup suivant.
+        let pieces = [piece(1, Kind::Sentinel, 59), piece(2, Kind::Sentinel, 55)];
+        let s = State::new(FLAT, &pieces, 1, 20, [0, 0], 0, 200);
+        let moves = legal_moves(&s);
+        let to = |sq: u8| moves.iter().find(|m| m.kind == MoveKind::Move && m.to == sq).copied().expect("coup");
+        assert!(!e.capturable(&s, s.pieces()[1]));
+        assert!(e.hunts(&s, &to(56)));
+        assert!(!e.hunts(&s, &to(69)));
     }
 
     #[test]

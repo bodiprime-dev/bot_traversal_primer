@@ -176,6 +176,7 @@ fn main() {
         beam: arg(&args, "--beam", Config::default().beam as u64) as usize,
         guard_root: arg(&args, "--guard-root", 0) as usize,
         guard_tree: arg(&args, "--guard-tree", 0) as usize,
+        hunt: arg(&args, "--hunt", 0) as usize,
         ..Config::default()
     };
     let sprint = arg(&args, "--sprint", 0) != 0;
@@ -219,8 +220,8 @@ fn main() {
     let score = (results.iter().filter(|&&r| r == 1).count() as f64 + 0.5 * results.iter().filter(|&&r| r == 0).count() as f64)
         / all.len() as f64;
     println!(
-        "faisceau {} ; parades : {} à la racine, {} par nœud ; tours exacts : {} ; menace : {}",
-        cfg.beam, cfg.guard_root, cfg.guard_tree, weights.exact_turns, weights.sentinel_threat
+        "faisceau {} ; parades : {} à la racine, {} par nœud ; chasse : {} ; tours exacts : {} ; menace : {}",
+        cfg.beam, cfg.guard_root, cfg.guard_tree, cfg.hunt, weights.exact_turns, weights.sentinel_threat
     );
     println!(
         "Piolet ({nodes} nœuds, start_race {} / exit_race {} / spread {} + d/{} / wall {} / pressure {} / alive {}) contre Mont Blanc : {} parties",
