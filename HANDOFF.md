@@ -242,6 +242,33 @@ d'escorte et de défense n'étaient jamais examinés. Au-delà de 20, la recherc
 Laissés à 0 : avec un faisceau assez large, la recherche voit déjà ces coups ; le budget étant
 compté en nœuds en natif, ce n'est pas une question de coût.
 
+## Analyse : Bleu (examples/blue.rs, examples/captures.rs)
+
+Piolet (faisceau 20) en Bleu contre Mont Blanc, 200 cartes : 121 gagnées, 56 perdues sur la
+Sentinelle rouge. En Rouge, Piolet fait 77 % ; en Bleu, 61 à 63 %.
+
+`tempo::sprint_turns` (tours exacts pour sortir si rien d'autre ne bouge, coups du moteur) et
+`tempo::tempo_balance` (bilan d'un coup en tours). Gain net = perdus par eux + gagnés par nous − 1.
+
+| Parties perdues (56) | |
+|---|---|
+| tours où un coup « 2 contre 1 » (gain net ≥ 1) existait / joué | 80 sur 833 / 11 |
+| tours où Bleu joue un coup à −1 alors que le meilleur valait 0 | 536 (64 %) |
+| Bleu en tête sans jouer sa Sentinelle / avancée sûre disponible | 109 / 54 |
+
+Une capture termine le déplacement : un bloqueur capturable coûte quand même un tour à la
+Sentinelle adverse (échange 1 contre 1).
+
+**Captures de Sentinelle rouge refusées : 159 cas, presque tous justifiés.** 81 : la capture
+était suivie d'une reprise (souvent notre Sentinelle prend la leur et se fait reprendre) ; 47 :
+le coup joué gagnait (sortie, souvent de notre Sentinelle) ; 25 : la recherche juge le coup joué
+au moins aussi bon ; 6 seulement où elle préfère la capture. Les refus ont coûté 6 parties, dont
+une (carte 182) où deux Sentinelles se font face 20 demi-coups durant, chacune prenable et
+reprenable : un face-à-face que l'évaluation juge nul et que Rouge finit par gagner.
+
+Conclusion : le problème de Bleu n'est pas tactique (captures) mais le temps perdu à chaque
+coup, que l'évaluation ne mesure pas.
+
 ## Prochaine étape : évaluation par poids d'actions
 
 Remplacer `Ctx::evaluate` par notre fonction, avec une structure de poids réglable, par exemple :
