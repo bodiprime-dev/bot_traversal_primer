@@ -18,9 +18,10 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use piolet::boards;
-use piolet::eval::Weights;
+use piolet::eval::{exact_turns, Weights};
 use piolet::search::{Config, Piolet};
-use traversal_bot::core::{apply_move, choose_move, legal_moves, new_game, Kind, Level, MoveKind, Rng};
+use traversal_bot::core::bot::exit_costs;
+use traversal_bot::core::{apply_move, choose_move, legal_moves, new_game, Kind, Level, Move, MoveKind, Rng, State};
 
 thread_local! {
     /// Appels restants à `stop` (un appel tous les 64 nœuds) pour le coup en cours.
@@ -75,13 +76,34 @@ struct Game {
     exits: Vec<Exit>,
 }
 
-fn play(board: [u8; 100], piolet_side: u8, nodes: u64, weights: Weights, guard: (usize, usize)) -> Game {
-    let mut bot = Piolet::new(Config { weights, guard_root: guard.0, guard_tree: guard.1, ..Config::default() });
+/// Stratégie « Sprinteur » (`--sprint 1`) : sortir la Sentinelle dès que possible, sinon le
+/// coup de Sentinelle qui réduit le plus ses tours restants (distance exacte, puis coût sur le
+/// relief) ; `None` si aucun ne la rapproche (la recherche de Piolet reprend la main).
+fn sprint_move(s: &State, moves: &[Move], turns: &[u8; 100], cost: &[u16; 100]) -> Option<Move> {
+    let sentinel = |m: &&Move| s.piece(m.piece).kind == Kind::Sentinel;
+    if let Some(m) = moves.iter().filter(sentinel).find(|m| m.kind == MoveKind::Exit) {
+        return Some(*m);
+    }
+    moves
+        .iter()
+        .filter(sentinel)
+        .filter(|m| matches!(m.kind, MoveKind::Move | MoveKind::Attack))
+        .filter(|m| turns[m.to as usize] < turns[s.piece(m.piece).sq as usize])
+        .min_by_key(|m| (turns[m.to as usize], cost[m.to as usize]))
+        .copied()
+}
+
+fn play(board: [u8; 100], piolet_side: u8, nodes: u64, cfg: Config, sprint: bool) -> Game {
+    let mut bot = Piolet::new(cfg);
     let mut s = new_game(board);
+    let (turns, cost) = (exact_turns(&board, piolet_side, Kind::Sentinel), exit_costs(&board, piolet_side));
     let mut exits = Vec::new();
     while !s.over {
         let moves = legal_moves(&s);
-        let mv = if s.to_move == piolet_side {
+        let sprinted = (sprint && s.to_move == piolet_side).then(|| sprint_move(&s, &moves, &turns, &cost)).flatten();
+        let mv = if let Some(m) = sprinted {
+            m
+        } else if s.to_move == piolet_side {
             CALLS_LEFT.with(|c| c.set(nodes.div_ceil(64)));
             moves[bot.choose(&s, &moves, out_of_nodes).index]
         } else {
@@ -137,7 +159,14 @@ fn main() {
         exact_turns: arg(&args, "--exact", Weights::default().exact_turns as u64) != 0,
         ..Weights::default()
     };
-    let guard = (arg(&args, "--guard-root", 0) as usize, arg(&args, "--guard-tree", 0) as usize);
+    let cfg = Config {
+        weights,
+        beam: arg(&args, "--beam", Config::default().beam as u64) as usize,
+        guard_root: arg(&args, "--guard-root", 0) as usize,
+        guard_tree: arg(&args, "--guard-tree", 0) as usize,
+        ..Config::default()
+    };
+    let sprint = arg(&args, "--sprint", 0) != 0;
     let boards = boards();
 
     let next = AtomicUsize::new(0);
@@ -150,7 +179,7 @@ fn main() {
                     break;
                 }
                 let side = if g % 2 == 0 { 1 } else { 2 };
-                let game = Game { index: g, ..play(boards[(g / 2) % boards.len()], side, nodes, weights, guard) };
+                let game = Game { index: g, ..play(boards[(g / 2) % boards.len()], side, nodes, cfg, sprint) };
                 done.lock().unwrap().push(game);
             });
         }
@@ -177,7 +206,10 @@ fn main() {
     let results: Vec<i32> = all.iter().map(|g| g.result).collect();
     let score = (results.iter().filter(|&&r| r == 1).count() as f64 + 0.5 * results.iter().filter(|&&r| r == 0).count() as f64)
         / all.len() as f64;
-    println!("parades : {} à la racine, {} par nœud ; tours exacts : {}", guard.0, guard.1, weights.exact_turns);
+    println!(
+        "faisceau {} ; parades : {} à la racine, {} par nœud ; tours exacts : {}",
+        cfg.beam, cfg.guard_root, cfg.guard_tree, weights.exact_turns
+    );
     println!(
         "Piolet ({nodes} nœuds, start_race {} / exit_race {} / spread {} + d/{} / wall {} / pressure {} / alive {}) contre Mont Blanc : {} parties",
         weights.start_race,
