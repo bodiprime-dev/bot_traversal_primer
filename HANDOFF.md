@@ -169,6 +169,29 @@ ce qui est faux sur le relief (une marche de coût 3 ne se coupe pas en deux tou
 distance exacte en tours, par type de pièce (budget de Mouvement par tour, bonds et diagonales
 de l'Explorateur), se précalcule une fois par coup : coût nul par nœud.
 
+## Essai : distance exacte en tours (neutre)
+
+`exact_turns` (`eval.rs`) : tours minimaux pour sortir, par camp et type de pièce, sur le relief
+seul ; vérifiée contre un parcours en largeur sur les coups légaux du moteur
+(`exact_turns_matches_the_engine`). `ceil(coût / M)` sous-estime 22 % des Sentinelles au
+départ (d'1 ou 2 tours), 13 % des cases pour la Sentinelle, 7 % pour l'Avant-garde.
+
+A/B apparié contre la version `exit_race` :
+
+| Variante | 3 000 nœuds | 3 600 nœuds | 4 500 nœuds |
+|---|---|---|---|
+| référence | 53,5 % | 55,8 % | 50,4 % |
+| `--exact 1` | 51,4 % (60 / 68) | 53,5 % (61 / 73) | 50,6 % (66 / 63) |
+| `--exact 1 --start 400` | 54,5 % (90 / 85) | 51,2 % (79 / 96) | — |
+
+Rien de significatif : `exact_turns` reste à `false`. La distance est juste mais ne change pas
+l'issue : près de la sortie, la recherche voit les vrais coups ; de loin, l'erreur ne semble pas
+décider des parties.
+
+Constat à creuser : le score de référence ne croît pas avec le budget (3 000 : 53,5 % ; 3 600 :
+55,8 % ; 4 500 : 50,4 %). Si plus de nœuds n'aident pas, accélérer l'évaluation n'aidera pas
+non plus ; à vérifier avec des budgets bien plus grands (×2, ×4) avant d'y investir.
+
 ## Prochaine étape : évaluation par poids d'actions
 
 Remplacer `Ctx::evaluate` par notre fonction, avec une structure de poids réglable, par exemple :
