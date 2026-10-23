@@ -213,22 +213,8 @@ impl Eval {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::boards;
     use traversal_bot::core::{apply_move, legal_moves, new_game, Ctx, Tuning};
-
-    /// Les 200 cartes officielles (`data/boards.json`, copie de celui du SDK).
-    pub(crate) fn boards() -> Vec<[u8; SQUARES]> {
-        include_str!("../data/boards.json")
-            .split("],[")
-            .map(|b| {
-                let v: Vec<u8> = b
-                    .trim_matches(|c| c == '[' || c == ']' || c == '\n')
-                    .split(',')
-                    .map(|x| x.trim().parse().expect("hauteur"))
-                    .collect();
-                v.try_into().expect("100 cases")
-            })
-            .collect()
-    }
 
     /// Hasard reproductible (splitmix64).
     fn next(seed: &mut u64) -> u64 {

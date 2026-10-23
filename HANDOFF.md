@@ -63,6 +63,29 @@ Conséquences :
 - La marge est large : passer `SPEND` de 1/2 à ~4/5 donnerait ~60 % de nœuds en plus sans
   risque (dépassement observé < 50 M). À mesurer.
 
+## Mesure : qui sort le premier, et ce que ça donne (duel natif, 400 parties)
+
+`cargo run --release --example duel -- --games 400` : Piolet (3 600 nœuds, évaluation = SDK)
+contre Mont Blanc natif. Le harnais reproduit l'arène wasm (40 parties : 52,5 % natif contre
+51,2 % wasm). Total : 191 V / 17 N / 192 D (49,9 %).
+
+| Première sortie | Parties | Résultat pour Piolet | Score |
+|---|---|---|---|
+| Sentinelle de Piolet (victoire immédiate) | 150 | 150 / 0 / 0 | 100 % |
+| Sentinelle de Mont Blanc | 144 | 0 / 0 / 144 | 0 % |
+| Piolet, Explorateur | 22 | 3 / 1 / 18 | 16 % |
+| Piolet, Avant-garde | 28 | 5 / 9 / 14 | 34 % |
+| Mont Blanc, Explorateur | 20 | 14 / 3 / 3 | 78 % |
+| Mont Blanc, Avant-garde | 20 | 11 / 3 / 6 | 63 % |
+| aucune sortie (limite de coups) | 16 | 8 / 1 / 7 | 53 % |
+
+- **74 % des parties se jouent sur la course des Sentinelles** (294 sur 400).
+- Sortir le premier hors Sentinelle est perdant pour les deux bots ; Piolet le fait plus souvent
+  (50 contre 40) et y marque 26 %. Après une sortie de Piolet hors Sentinelle, la sortie suivante
+  est 28 fois sur 50 une Sentinelle de Mont Blanc (F3 > F1 ou F2 : Mont Blanc gagne).
+- Corrélation, pas encore causalité : une partie de ces sorties a pu être le meilleur essai dans
+  une position déjà perdue. Le test A/B du terme `exit_race` tranchera.
+
 ## Prochaine étape : évaluation par poids d'actions
 
 Remplacer `Ctx::evaluate` par notre fonction, avec une structure de poids réglable, par exemple :

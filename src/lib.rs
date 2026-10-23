@@ -12,6 +12,22 @@
 pub mod eval;
 pub mod search;
 
+/// Les 200 cartes officielles (`data/boards.json`, copie de celle du SDK v0.2.0), pour les
+/// tests et les duels natifs. Inutilisée par le bot : absente du `.wasm`.
+pub fn boards() -> Vec<[u8; traversal_bot::core::config::SQUARES]> {
+    include_str!("../data/boards.json")
+        .split("],[")
+        .map(|b| {
+            let v: Vec<u8> = b
+                .trim_matches(|c| c == '[' || c == ']' || c == '\n')
+                .split(',')
+                .map(|x| x.trim().parse().expect("hauteur"))
+                .collect();
+            v.try_into().expect("100 cases")
+        })
+        .collect()
+}
+
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicU64, Ordering};
 
