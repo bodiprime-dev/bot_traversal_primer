@@ -74,6 +74,8 @@ struct Game {
     result: i32,
     reason: &'static str,
     exits: Vec<Exit>,
+    /// Captures : (par Piolet ?, attaquant, cible, demi-coup).
+    captures: Vec<(bool, Kind, Kind, u16)>,
     /// Sentinelles capturées : (de Piolet, de Mont Blanc).
     sentinels_lost: (usize, usize),
 }
@@ -101,6 +103,7 @@ fn play(board: [u8; 100], piolet_side: u8, nodes: u64, cfg: Config, sprint: bool
     let mut s = new_game(board);
     let (turns, cost) = (exact_turns(&board, piolet_side, Kind::Sentinel), exit_costs(&board, piolet_side));
     let mut exits = Vec::new();
+    let mut captures = Vec::new();
     while !s.over {
         let moves = legal_moves(&s);
         let sprinted = (sprint && s.to_move == piolet_side).then(|| sprint_move(&s, &moves, &turns, &cost)).flatten();
@@ -114,6 +117,10 @@ fn play(board: [u8; 100], piolet_side: u8, nodes: u64, cfg: Config, sprint: bool
         };
         if mv.kind == MoveKind::Exit {
             exits.push(Exit { piolet: s.to_move == piolet_side, kind: s.piece(mv.piece).kind, ply: s.ply });
+        }
+        if mv.kind == MoveKind::Attack {
+            let target = s.piece(s.at(mv.to).expect("cible")).kind;
+            captures.push((s.to_move == piolet_side, s.piece(mv.piece).kind, target, s.ply));
         }
         s = apply_move(&s, &mv);
     }
@@ -130,7 +137,7 @@ fn play(board: [u8; 100], piolet_side: u8, nodes: u64, cfg: Config, sprint: bool
         2 - on_board - out
     };
     let sentinels_lost = (lost(true), lost(false));
-    Game { index: 0, result, reason: s.reason.map_or("?", |r| r.name()), exits, sentinels_lost }
+    Game { index: 0, result, reason: s.reason.map_or("?", |r| r.name()), exits, captures, sentinels_lost }
 }
 
 fn arg(args: &[String], name: &str, default: u64) -> u64 {
@@ -213,7 +220,21 @@ fn main() {
                     .iter()
                     .map(|e| format!("{}:{}@{}", if e.piolet { "P" } else { "M" }, &kind_name(e.kind)[..1], e.ply))
                     .collect();
-                format!("{:>3} {:>2} {:<10} {} perdues:{}/{}", g.index, g.result, g.reason, exits.join(" "), g.sentinels_lost.0, g.sentinels_lost.1)
+                let captures: Vec<String> = g
+                    .captures
+                    .iter()
+                    .map(|&(p, a, t, ply)| format!("{}:{}x{}@{}", if p { "P" } else { "M" }, &kind_name(a)[..1], &kind_name(t)[..1], ply))
+                    .collect();
+                format!(
+                    "{:>3} {:>2} {:<10} {} perdues:{}/{} prises:{}",
+                    g.index,
+                    g.result,
+                    g.reason,
+                    exits.join(" "),
+                    g.sentinels_lost.0,
+                    g.sentinels_lost.1,
+                    captures.join(",")
+                )
             })
             .collect();
         std::fs::write(path, lines.join("\n") + "\n").expect("écriture de --list");
