@@ -18,6 +18,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use piolet::boards;
+use piolet::eval::{Eval, Weights};
 use piolet::search::{Config, Piolet};
 use piolet::tempo::{best_sentinel, tempo_balance, BLOCKED};
 use traversal_bot::core::{apply_move, choose_move, legal_moves, new_game, Kind, Level, MoveKind, Rng};
@@ -67,6 +68,12 @@ struct Turn {
     played: i32,
     /// Le coup joué était-il un coup de Sentinelle ?
     sentinel_move: bool,
+    /// Capture d'une Sentinelle rouge : possible, jouée.
+    capture: (bool, bool),
+    /// Un coup de Sentinelle qui la rapproche existe ; dont un après lequel elle n'est pas
+    /// capturable.
+    advance: bool,
+    safe_advance: bool,
 }
 
 struct Game {
@@ -85,6 +92,7 @@ fn net((theirs, ours): (i32, i32)) -> i32 {
 
 fn play(board: usize, heights: [u8; 100], nodes: u64) -> Game {
     let mut bot = Piolet::new(Config::default());
+    let eval = Eval::new(&heights, Weights::default());
     let mut s = new_game(heights);
     let red_start = best_sentinel(&s, 1).map_or(BLOCKED, |(_, t)| t);
     let (mut turns, mut red_moves) = (Vec::new(), 0);
@@ -98,7 +106,20 @@ fn play(board: usize, heights: [u8; 100], nodes: u64) -> Game {
             let best = moves.iter().filter(|m| m.kind != MoveKind::Pass).map(|m| net(tempo_balance(&s, m))).max().unwrap_or(0);
             let played = if mv.kind == MoveKind::Pass { -1 } else { net(tempo_balance(&s, &mv)) };
             let sentinel_move = mv.kind != MoveKind::Pass && s.piece(mv.piece).kind == Kind::Sentinel;
-            turns.push(Turn { red, blue, best, played, sentinel_move });
+            let on_red_sentinel = |m: &traversal_bot::core::Move| {
+                m.kind == MoveKind::Attack && s.at(m.to).is_some_and(|j| s.piece(j).kind == Kind::Sentinel)
+            };
+            let capture = (moves.iter().any(on_red_sentinel), on_red_sentinel(&mv));
+            let advances: Vec<_> = moves
+                .iter()
+                .filter(|m| matches!(m.kind, MoveKind::Move | MoveKind::Attack) && s.piece(m.piece).kind == Kind::Sentinel)
+                .filter(|m| tempo_balance(&s, m).1 >= 1)
+                .collect();
+            let safe_advance = advances.iter().any(|m| {
+                let child = apply_move(&s, m);
+                child.at(m.to).is_some_and(|j| !eval.capturable(&child, child.piece(j)))
+            });
+            turns.push(Turn { red, blue, best, played, sentinel_move, capture, advance: !advances.is_empty(), safe_advance });
             mv
         } else {
             red_moves += 1;
@@ -186,6 +207,18 @@ fn main() {
         println!("  (meilleur gain net dispo, gain net joué) -> tours : {hist:?}");
         let sentinel = turns.iter().filter(|t| t.sentinel_move).count();
         println!("  Coups de Sentinelle : {sentinel} / {}", turns.len());
+        let cap = turns.iter().filter(|t| t.capture.0).count();
+        let cap_played = turns.iter().filter(|t| t.capture.1).count();
+        println!("  Capture d'une Sentinelle rouge possible : {cap} tours ; jouée : {cap_played}");
+        let ahead: Vec<&&Turn> = turns.iter().filter(|t| t.blue <= t.red).collect();
+        let stalled: Vec<&&Turn> = ahead.iter().copied().filter(|t| !t.sentinel_move).collect();
+        println!(
+            "  Bleu en tête ou à égalité : {} tours ; sans jouer sa Sentinelle : {} (avancée possible : {}, avancée sûre : {})",
+            ahead.len(),
+            stalled.len(),
+            stalled.iter().filter(|t| t.advance).count(),
+            stalled.iter().filter(|t| t.safe_advance).count()
+        );
     }
 
     // Quelques parties perdues à examiner : la course tour par tour.
