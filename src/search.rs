@@ -27,7 +27,9 @@ pub struct Config {
     /// Profondeur maximale (demi-coups) de l'approfondissement itératif.
     pub max_depth: u8,
     /// Coups « calmes » explorés par nœud, en plus des captures et sorties (toujours toutes
-    /// explorées). `usize::MAX` : pas d'élagage.
+    /// explorées). `usize::MAX` : pas d'élagage. 20 : mesuré contre Mont Blanc, 6 / 10 / 14 /
+    /// 20 / illimité donnent 43 / 56 / 60 / 69 / 61 % (le tri des coups calmes ne regarde que
+    /// l'avancée : trop étroit, les coups d'escorte et de défense ne sont jamais vus).
     pub beam: usize,
     /// Poids de l'évaluation.
     pub weights: Weights,
@@ -45,7 +47,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Config {
-        Config { max_depth: 16, beam: 10, weights: Weights::default(), guard_root: 0, guard_tree: 0, hunt: 0 }
+        Config { max_depth: 16, beam: 20, weights: Weights::default(), guard_root: 0, guard_tree: 0, hunt: 0 }
     }
 }
 
