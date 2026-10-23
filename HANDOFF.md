@@ -139,6 +139,36 @@ des coups calmes (SDK, `ordered`) ne regarde que l'avancée vers la sortie ; ave
 adverse sans avancer peut n'être jamais examiné. Mont Blanc ajoute ces parades à la racine
 (`guard_squares`, `guard_extra`) ; pas Piolet.
 
+## Essai : coups de parade contre la Sentinelle adverse (neutre)
+
+`Config::guard_root` / `guard_tree` (cases d'un plus court chemin de la Sentinelle adverse,
+`Eval::guard_squares`), A/B apparié contre la version `exit_race` (55,8 %) :
+
+| Variante | Score | Améliorées / dégradées | z |
+|---|---|---|---|
+| `--guard-root 2` | 54,2 % | 41 / 47 | −0,64 |
+| `--guard-root 4` | 54,1 % | 51 / 59 | −0,76 |
+| `--guard-tree 1` | 54,5 % | 80 / 87 | −0,54 |
+| `--guard-tree 2` | 56,5 % | 92 / 89 | +0,22 |
+| `--guard-root 2 --guard-tree 1` | 56,6 % | 96 / 95 | +0,07 |
+
+Rien de significatif : laissés à 0.
+
+### Pourquoi la course des Sentinelles résiste (diagnostic sur la référence)
+
+- C'est un **sprint** : la Sentinelle gagnante sort au demi-coup 20 en médiane (10 coups par
+  camp). Peu de temps pour bloquer, encercler ou piéger.
+- **Le trait compte** : Rouge (qui joue en premier) gagne 164 courses, Bleu 127.
+- Sur les 110 cartes où les deux parties (couleurs inversées) finissent en course de
+  Sentinelles, 56 sont gagnées par la même **couleur** des deux côtés (la carte et le trait
+  décident, pas le bot), 54 par le même **bot** : 27 pour Piolet, 27 pour Mont Blanc.
+
+Conséquence : le gain possible est dans la moitié « décidée par le bot », et ce qui y compte est
+de courir au plus juste. Piste : l'évaluation estime les tours comme `ceil(coût / Mouvement)`,
+ce qui est faux sur le relief (une marche de coût 3 ne se coupe pas en deux tours). Une
+distance exacte en tours, par type de pièce (budget de Mouvement par tour, bonds et diagonales
+de l'Explorateur), se précalcule une fois par coup : coût nul par nœud.
+
 ## Prochaine étape : évaluation par poids d'actions
 
 Remplacer `Ctx::evaluate` par notre fonction, avec une structure de poids réglable, par exemple :
