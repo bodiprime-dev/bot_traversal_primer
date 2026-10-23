@@ -168,6 +168,7 @@ fn main() {
         sentinel_pressure: arg(&args, "--pressure", Weights::default().sentinel_pressure as u64) as i32,
         sentinel_alive: arg(&args, "--alive", Weights::default().sentinel_alive as u64) as i32,
         exact_turns: arg(&args, "--exact", Weights::default().exact_turns as u64) != 0,
+        sentinel_threat: arg(&args, "--threat", Weights::default().sentinel_threat as u64) as i32,
         ..Weights::default()
     };
     let cfg = Config {
@@ -218,8 +219,8 @@ fn main() {
     let score = (results.iter().filter(|&&r| r == 1).count() as f64 + 0.5 * results.iter().filter(|&&r| r == 0).count() as f64)
         / all.len() as f64;
     println!(
-        "faisceau {} ; parades : {} à la racine, {} par nœud ; tours exacts : {}",
-        cfg.beam, cfg.guard_root, cfg.guard_tree, weights.exact_turns
+        "faisceau {} ; parades : {} à la racine, {} par nœud ; tours exacts : {} ; menace : {}",
+        cfg.beam, cfg.guard_root, cfg.guard_tree, weights.exact_turns, weights.sentinel_threat
     );
     println!(
         "Piolet ({nodes} nœuds, start_race {} / exit_race {} / spread {} + d/{} / wall {} / pressure {} / alive {}) contre Mont Blanc : {} parties",

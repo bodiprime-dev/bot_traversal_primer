@@ -11,14 +11,15 @@
 //!  - bonus de Sentinelle proche de la sortie tant que personne n'est sorti ;
 //!  - course des Sentinelles (R8.2).
 
+use std::cell::RefCell;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
 use traversal_bot::core::bot::{exit_costs, WIN};
 use traversal_bot::core::config::{SIZE, SQUARES};
-use traversal_bot::core::movegen::{neighbors_of, step_cost};
+use traversal_bot::core::movegen::{neighbors_of, piece_moves, step_cost};
 use traversal_bot::core::state::MAX_PIECES;
-use traversal_bot::core::{Kind, Piece, State};
+use traversal_bot::core::{Kind, Move, MoveKind, Piece, State};
 
 /// Poids de l'évaluation. `Weights::sdk()` reproduit l'évaluation du SDK (`Tuning::default()`
 /// et les constantes en dur de `Ctx::evaluate`) ; `Weights::default()` y ajoute la course à
@@ -71,6 +72,13 @@ pub struct Weights {
     /// deux tours, coups spéciaux de l'Explorateur) au lieu de `ceil(coût / Mouvement)`. Le
     /// blocage par les pièces s'y ajoute en tours supplémentaires.
     pub exact_turns: bool,
+    /// Menace réelle : pénalité, pour le camp au trait, par Sentinelle que l'adversaire peut
+    /// capturer à son prochain coup (règle de combat du moteur : soutiens, hauteur, charge,
+    /// coups spéciaux). La recherche de calme suppose que le camp au trait peut « ne rien
+    /// faire » ; ici, il doit dépenser un coup pour sauver sa Sentinelle, ou la perdre.
+    /// (Une Sentinelle capturable par le camp au trait, elle, est vue : la recherche de calme
+    /// joue la prise.)
+    pub sentinel_threat: i32,
 }
 
 impl Default for Weights {
@@ -106,6 +114,7 @@ impl Weights {
             sentinel_pressure: 0,
             sentinel_alive: 0,
             exact_turns: false,
+            sentinel_threat: 0,
         }
     }
 }
@@ -193,6 +202,8 @@ pub struct Eval {
     /// `exact_turns`.
     exact: Option<Box<[[[u8; SQUARES]; 3]; 2]>>,
     w: Weights,
+    /// Tampon de coups réutilisé (pas d'allocation par évaluation).
+    buf: RefCell<Vec<Move>>,
 }
 
 impl Eval {
@@ -201,7 +212,7 @@ impl Eval {
             let table = |o| [Kind::Explorer, Kind::Vanguard, Kind::Sentinel].map(|k| exact_turns(heights, o, k));
             Box::new([table(1), table(2)])
         });
-        Eval { costs: [exit_costs(heights, 1), exit_costs(heights, 2)], exact, w }
+        Eval { costs: [exit_costs(heights, 1), exit_costs(heights, 2)], exact, w, buf: RefCell::new(Vec::with_capacity(64)) }
     }
 
     #[inline]
@@ -250,6 +261,29 @@ impl Eval {
             }
         }
         out
+    }
+
+    /// Une pièce adverse peut-elle capturer la pièce sur `target` à son prochain coup ? Coups
+    /// du moteur (`piece_moves`), limités aux pièces assez proches : une attaque coûte au
+    /// moins la distance de Manhattan (un coup spécial de l'Explorateur, au plus 2 cases).
+    pub fn capturable(&self, state: &State, target: Piece) -> bool {
+        let (tx, ty) = ((target.sq as usize % SIZE) as i32, (target.sq as usize / SIZE) as i32);
+        let mut buf = self.buf.borrow_mut();
+        for (j, q) in state.pieces().iter().enumerate() {
+            if q.owner == target.owner {
+                continue;
+            }
+            let (qx, qy) = ((q.sq as usize % SIZE) as i32, (q.sq as usize / SIZE) as i32);
+            if (qx - tx).abs() + (qy - ty).abs() > q.kind.movement() as i32 {
+                continue;
+            }
+            buf.clear();
+            piece_moves(state, j as u8, &mut buf);
+            if buf.iter().any(|m| m.kind == MoveKind::Attack && m.to == target.sq) {
+                return true;
+            }
+        }
+        false
     }
 
     /// Défense d'une pièce (R7.4) : sa Force + 1 par allié voisin.
@@ -402,6 +436,16 @@ impl Eval {
             } else if t < two[o][1] {
                 two[o][1] = t;
             }
+        }
+        if w.sentinel_threat != 0 {
+            let mover = state.to_move;
+            let threatened = state
+                .pieces()
+                .iter()
+                .filter(|p| p.owner == mover && p.kind == Kind::Sentinel && self.capturable(state, **p))
+                .count() as i32;
+            let v = w.sentinel_threat * threatened;
+            total += if mover == side { -v } else { v };
         }
         if !nobody_out {
             if w.exit_race != 0 {
@@ -689,6 +733,34 @@ mod sentinel_tests {
         // Sans piège : à travers l'Avant-garde (5 + 2 pour l'abattre). Avec : détour par la
         // colonne 2 (8).
         assert_eq!((open, trap), (7, 8));
+    }
+
+    #[test]
+    fn a_threatened_sentinel_costs_the_side_to_move() {
+        let w = Weights { sentinel_threat: 100, ..nothing() };
+        let e = Eval::new(&FLAT, w);
+        // Sentinelle bleue au contact de la rouge : attaque 3 contre défense 3, elle passe.
+        let pieces = [piece(1, Kind::Sentinel, 55), piece(2, Kind::Sentinel, 56)];
+        let red = State::new(FLAT, &pieces, 1, 20, [0, 0], 0, 200);
+        assert!(e.capturable(&red, red.pieces()[0]));
+        // Rouge au trait : sa Sentinelle est menacée, il doit y répondre.
+        assert_eq!(e.evaluate(&red, 1), -100);
+        assert_eq!(e.evaluate(&red, 2), 100);
+        // Bleu au trait : la menace pèse sur la Sentinelle bleue, symétriquement.
+        let blue = State::new(FLAT, &pieces, 2, 20, [0, 0], 0, 200);
+        assert_eq!(e.evaluate(&blue, 2), -100);
+        // Escortée par une Avant-garde au contact (65, voisins orthogonaux seulement) :
+        // défense 4, la Sentinelle rouge ne craint plus rien ; la bleue, seule, reste à la
+        // merci de la rouge (3 contre 3).
+        let pieces = [piece(1, Kind::Sentinel, 55), piece(1, Kind::Vanguard, 65), piece(2, Kind::Sentinel, 56)];
+        let red = State::new(FLAT, &pieces, 1, 20, [0, 0], 0, 200);
+        assert!(!e.capturable(&red, red.pieces()[0]));
+        assert!(e.capturable(&red, red.pieces()[2]));
+        assert_eq!(e.evaluate(&red, 1), 0);
+        // Une pièce lointaine ne menace rien.
+        let pieces = [piece(1, Kind::Sentinel, 5), piece(2, Kind::Sentinel, 95)];
+        let red = State::new(FLAT, &pieces, 1, 20, [0, 0], 0, 200);
+        assert_eq!(e.evaluate(&red, 1), 0);
     }
 
     #[test]
