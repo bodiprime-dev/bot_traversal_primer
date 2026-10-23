@@ -37,6 +37,32 @@ Crate **`piolet`** (cdylib + rlib), dépendance `traversal-bot` en git tag v0.2.
 
 Constat de calibrage (natif, petit échantillon) : Mont Blanc (profondeur 4, beam 7, insight 3) dépense en moyenne ≈ 3300 nœuds par coup ; Piolet avec un budget de 6000 nœuds atteint une profondeur moyenne de ≈ 5,3. Premier duel de 10 parties : +4 =0 −6 (40 %), trop peu de parties pour conclure ; les variantes de beam/budget n'ont pas été terminées. **Rien n'est prouvé sur la force relative.** À re-mesurer avec plus de parties une fois l'évaluation propre écrite.
 
+## Mesures en vrai wasm (arène officielle, v0.2.0, 2 000 M de fuel par coup)
+
+Outil : `scripts/arena.sh` (arène du SDK compilée en natif, sans Docker). Le `.wasm` (66 Ko) passe `check`.
+Évaluation encore celle du SDK ; dépense plafonnée à 50 % du fuel.
+
+| Adversaire | Parties | V / N / D | Score | Elo (±) | Fuel moyen / coup |
+|---|---|---|---|---|---|
+| galet | 40 | 40 / 0 / 0 | 100 % | — | 748 M (37 %) |
+| sentier | 40 | 39 / 0 / 1 | 97,5 % | +636 ± 563 | 745 M (37 %) |
+| crete | 40 | 28 / 2 / 10 | 72,5 % | +168 ± 152 | 878 M (44 %) |
+| sommet | 40 | 27 / 0 / 13 | 67,5 % | +127 ± 137 | 868 M (43 %) |
+| montblanc | 40 | 19 / 3 / 18 | 51,2 % | +9 ± 112 | 910 M (46 %) |
+
+Contre Mont Blanc (20 parties, 462 coups journalisés) :
+- **≈ 280 k fuel par nœud** compté (les feuilles de la recherche de calme coupées par `stand >= beta`
+  ne sont pas comptées : le coût réel par évaluation est plus bas). ≈ 3 600 nœuds par coup.
+- Profondeur moyenne 5,1 (de 1 à 16 en fin de partie).
+- Pire coup : il restait 954 M, soit un dépassement d'au plus 46 M au-delà de la réserve
+  (contrôle tous les 64 nœuds ≈ 18 M). Aucune faute sur 200 parties.
+
+Conséquences :
+- Le coût par nœud est dominé par l'évaluation et le tri des coups du SDK. Notre évaluation
+  devra rester bon marché, sinon on perd en profondeur ce qu'on gagne en finesse.
+- La marge est large : passer `SPEND` de 1/2 à ~4/5 donnerait ~60 % de nœuds en plus sans
+  risque (dépassement observé < 50 M). À mesurer.
+
 ## Prochaine étape : évaluation par poids d'actions
 
 Remplacer `Ctx::evaluate` par notre fonction, avec une structure de poids réglable, par exemple :
@@ -66,7 +92,7 @@ Pistes :
 
 ## Contraintes d'environnement rencontrées
 
-- Dans le sandbox de Claude, `rustup target add wasm32-unknown-unknown` échoue : le proxy refuse `static.rust-lang.org` (403). **Le `.wasm` n'a donc jamais été compilé ni testé en wasm.** Le code compile en natif (`cargo check`, `cargo build --release --example duel`). À faire dans un environnement normal : `rustup target add wasm32-unknown-unknown` puis `cargo build --release --target wasm32-unknown-unknown` → `target/wasm32-unknown-unknown/release/piolet.wasm`.
+- ~~Dans le sandbox de Claude, `rustup target add wasm32-unknown-unknown` échoue~~ (résolu : la cible s'installe désormais, voir les mesures ci-dessus) : le proxy refuse `static.rust-lang.org` (403). **Le `.wasm` n'a donc jamais été compilé ni testé en wasm.** Le code compile en natif (`cargo check`, `cargo build --release --example duel`). À faire dans un environnement normal : `rustup target add wasm32-unknown-unknown` puis `cargo build --release --target wasm32-unknown-unknown` → `target/wasm32-unknown-unknown/release/piolet.wasm`.
 - Points à vérifier en vrai wasm : le `thread_local!` du bot, la taille du `.wasm` (≤ 1 Mo), l'absence d'import interdit (le SDK n'importe que `traversal.fuel_left` et `traversal.log`), la consommation réelle de fuel par nœud (non mesurée ; le commentaire du bot de départ évoque ~20 M de fuel pour 64 nœuds sur Mont Blanc).
 
 ## Annexe : code actuel

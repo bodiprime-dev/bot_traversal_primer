@@ -11,3 +11,13 @@ rustup target add wasm32-unknown-unknown
 cargo build --release --target wasm32-unknown-unknown
 # -> target/wasm32-unknown-unknown/release/piolet.wasm
 ```
+
+## Arène locale
+
+```sh
+scripts/arena.sh setup                      # une fois : arène officielle + 5 bots maison, sans Docker
+scripts/arena.sh check                      # validation comme sur le site
+scripts/arena.sh duel montblanc --games 40  # duel, couleurs alternées
+```
+
+Mesures actuelles : voir `HANDOFF.md`.
