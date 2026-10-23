@@ -291,6 +291,20 @@ tempo 10 : neutre ; tempo 25 + distance exacte : neutre (Bleu mieux, Rouge moins
   captures d'Explorateur sont des reprises (allonge, diagonales, bonds, + Force des alliés
   voisins de la cible). D'où le terme de couverture (`cover`).
 
+## Couverture (négatif, laissée à 0)
+
+Par-dessus la course en temps (76,0 % à 3 600 nœuds, 70,4 % à 3 000) :
+
+| Variante | 3 600 nœuds | 3 000 nœuds |
+|---|---|---|
+| binaire, poids 5 | 71,6 % (56 / 73, z −1,5) | — |
+| binaire, poids 15 | 64,9 % (52 / 97, z −3,7) | — |
+| puissance (plafond 3), poids 2 | 71,8 % (58 / 73, z −1,3) | 70,1 % (69 / 73) |
+| puissance (plafond 3), poids 5 | 69,8 % (58 / 86, z −2,3) | 69,5 % (76 / 81) |
+
+Valoriser la couverture regroupe les pièces au lieu de les faire avancer : elle coûte des temps.
+Les reprises sont l'affaire de la recherche (règle de combat exacte), pas de l'évaluation.
+
 ## Prochaine étape : évaluation par poids d'actions
 
 Remplacer `Ctx::evaluate` par notre fonction, avec une structure de poids réglable, par exemple :
