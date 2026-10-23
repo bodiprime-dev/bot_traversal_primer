@@ -192,6 +192,22 @@ Constat à creuser : le score de référence ne croît pas avec le budget (3 000
 55,8 % ; 4 500 : 50,4 %). Si plus de nœuds n'aident pas, accélérer l'évaluation n'aidera pas
 non plus ; à vérifier avec des budgets bien plus grands (×2, ×4) avant d'y investir.
 
+## Mesure : le budget de nœuds compte-t-il ? (peu)
+
+Version `exit_race`, 400 parties contre Mont Blanc par budget (A/B apparié contre 3 600) :
+
+| Nœuds par coup | 3 000 | 3 600 | 4 500 | 7 200 (×2) | 14 400 (×4) |
+|---|---|---|---|---|---|
+| Score | 53,5 % | 55,8 % | 50,4 % | 52,9 % (80 / 90) | 60,8 % (101 / 80, z = +1,56) |
+
+L'écart-type d'un score sur 400 parties est ≈ 2,5 points : jusqu'à ×2, la courbe est plate ;
+×4 donne peut-être +5 points, à la limite du significatif. Une accélération réaliste de
+l'évaluation (×1,5 à ×2) ne rapporterait donc presque rien : ce n'est pas le levier.
+
+Conséquence méthodologique : un écart de ±3 points entre deux runs de 400 parties est du bruit.
+Pour départager deux réglages proches, cumuler plusieurs budgets (comme pour exit_race) ou
+plus de cartes.
+
 ## Prochaine étape : évaluation par poids d'actions
 
 Remplacer `Ctx::evaluate` par notre fonction, avec une structure de poids réglable, par exemple :
