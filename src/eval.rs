@@ -18,7 +18,7 @@ use traversal_bot::core::bot::{exit_costs, WIN};
 use traversal_bot::core::config::{SIZE, SQUARES};
 use traversal_bot::core::movegen::{neighbors_of, step_cost};
 use traversal_bot::core::state::MAX_PIECES;
-use traversal_bot::core::{Kind, State};
+use traversal_bot::core::{Kind, Piece, State};
 
 /// Poids de l'évaluation. `Weights::sdk()` reproduit l'évaluation du SDK (`Tuning::default()`
 /// et les constantes en dur de `Ctx::evaluate`) ; `Weights::default()` y ajoute la course à
@@ -57,6 +57,16 @@ pub struct Weights {
     pub soft: u16,
     pub detour: u16,
     pub blend: i32,
+    /// Piège : une pièce dont la défense (Force + 1 par allié voisin, R7) atteint ce seuil est
+    /// un mur pour l'adversaire, comme une Sentinelle (une Sentinelle seule attaque à 3 : une
+    /// défense de 4 l'arrête). 0 : seules les Sentinelles sont des murs (SDK).
+    pub wall_defense: i32,
+    /// Attaque : par point de Force au contact d'une Sentinelle adverse (ces pièces s'ajoutent
+    /// à l'attaque contre elle, R7), plafonné à sa défense : au-delà, ça ne sert plus.
+    pub sentinel_pressure: i32,
+    /// Valeur d'une Sentinelle encore sur le plateau, en plus de sa Force : prendre la leur,
+    /// protéger la nôtre.
+    pub sentinel_alive: i32,
 }
 
 impl Default for Weights {
@@ -88,6 +98,9 @@ impl Weights {
             soft: 2,
             detour: 6,
             blend: 100,
+            wall_defense: 0,
+            sentinel_pressure: 0,
+            sentinel_alive: 0,
         }
     }
 }
@@ -115,14 +128,30 @@ impl Eval {
         (cost + m - 1) / m
     }
 
+    /// Défense d'une pièce (R7.4) : sa Force + 1 par allié voisin.
+    fn defense(state: &State, p: &Piece) -> i32 {
+        let allies = neighbors_of(p.sq)
+            .iter()
+            .filter(|&&nb| state.at(nb).is_some_and(|j| state.piece(j).owner == p.owner))
+            .count();
+        p.kind.strength() as i32 + allies as i32
+    }
+
     /// Coût de sortie depuis chaque case pour `owner`, en tenant compte des pièces : une
-    /// Sentinelle adverse est un mur, les autres pièces adverses se franchissent en les
-    /// abattant (`soft`), traverser une alliée coûte `ally`.
+    /// Sentinelle adverse (ou, avec `wall_defense`, toute pièce adverse assez défendue) est un
+    /// mur, les autres pièces adverses se franchissent en les abattant (`soft`), traverser
+    /// une alliée coûte `ally`.
     fn blocked_costs(&self, state: &State, owner: u8) -> [u16; SQUARES] {
         let w = &self.w;
         let row = if owner == 1 { SIZE - 1 } else { 0 };
         let other = |sq: u8| state.at(sq).map(|i| state.piece(i)).filter(|p| p.owner != owner);
-        let wall = |sq: u8| other(sq).is_some_and(|p| w.soft == 0 || p.kind == Kind::Sentinel);
+        let mut walls = [false; SQUARES];
+        for p in state.pieces().iter().filter(|p| p.owner != owner) {
+            walls[p.sq as usize] = w.soft == 0
+                || p.kind == Kind::Sentinel
+                || (w.wall_defense > 0 && Eval::defense(state, p) >= w.wall_defense);
+        }
+        let wall = |sq: u8| walls[sq as usize];
         let ally = |sq: u8| state.at(sq).is_some_and(|i| state.piece(i).owner == owner);
         let mut dist = [u16::MAX; SQUARES];
         let mut heap = BinaryHeap::new();
@@ -207,6 +236,23 @@ impl Eval {
                 + (w.progress_horizon - t).max(0) * (w.progress_base + w.progress_per_strength * strength);
             if p.kind == Kind::Sentinel && nobody_out {
                 v += (w.sentinel_horizon - t).max(0).pow(2) * w.sentinel_sq;
+            }
+            if p.kind == Kind::Sentinel {
+                v += w.sentinel_alive;
+                if w.sentinel_pressure != 0 {
+                    // Force adverse au contact (elle s'ajoute à toute attaque contre elle),
+                    // plafonnée à sa défense : c'est une valeur NÉGATIVE pour son camp.
+                    let mut attack = 0;
+                    for &nb in neighbors_of(p.sq) {
+                        if let Some(j) = state.at(nb) {
+                            let q = state.piece(j);
+                            if q.owner != p.owner {
+                                attack += q.kind.strength() as i32;
+                            }
+                        }
+                    }
+                    v -= w.sentinel_pressure * attack.min(Eval::defense(state, p));
+                }
             }
             total += if p.owner == side { v } else { -v };
             let o = p.owner as usize - 1;
@@ -463,5 +509,65 @@ mod race_tests {
         let s = State::new(FLAT, &pieces, 2, 40, [2, 0], 1, 200);
         let e = Eval::new(&s.heights, race_only());
         assert_eq!(e.evaluate(&s, 1), 400);
+    }
+}
+
+#[cfg(test)]
+mod sentinel_tests {
+    use super::*;
+    use traversal_bot::core::Piece;
+
+    const FLAT: [u8; SQUARES] = [1; SQUARES];
+
+    fn piece(owner: u8, kind: Kind, sq: u8) -> Piece {
+        Piece { owner, kind, sq }
+    }
+
+    /// Tous les termes à zéro, sauf ceux qu'on teste.
+    fn nothing() -> Weights {
+        Weights {
+            strength: 0,
+            progress_base: 0,
+            progress_per_strength: 0,
+            sentinel_sq: 0,
+            sentinel_race: 0,
+            exit_race: 0,
+            ..Weights::sdk()
+        }
+    }
+
+    #[test]
+    fn a_defended_line_is_a_wall_for_the_enemy_sentinel() {
+        // Rangée 3 rouge : E V V S E (colonnes 3 à 7). Les deux Avant-gardes ont 2 alliés
+        // voisins : défense 4, une Sentinelle seule (attaque 3) ne passe pas.
+        let pieces = [
+            piece(1, Kind::Explorer, 33),
+            piece(1, Kind::Vanguard, 34),
+            piece(1, Kind::Vanguard, 35),
+            piece(1, Kind::Sentinel, 36),
+            piece(1, Kind::Explorer, 37),
+            piece(2, Kind::Sentinel, 45),
+        ];
+        let s = State::new(FLAT, &pieces, 2, 20, [0, 0], 0, 200);
+        let open = Eval::new(&FLAT, nothing()).blocked_costs(&s, 2)[45];
+        let trap = Eval::new(&FLAT, Weights { wall_defense: 4, ..nothing() }).blocked_costs(&s, 2)[45];
+        // Sans piège : à travers l'Avant-garde (5 + 2 pour l'abattre). Avec : détour par la
+        // colonne 2 (8).
+        assert_eq!((open, trap), (7, 8));
+    }
+
+    #[test]
+    fn pressure_on_the_enemy_sentinel_counts_up_to_its_defense() {
+        let w = Weights { sentinel_pressure: 10, ..nothing() };
+        let e = Eval::new(&FLAT, w);
+        // Avant-garde rouge au contact de la Sentinelle bleue : 2 points de pression.
+        let pieces = [piece(1, Kind::Vanguard, 54), piece(2, Kind::Sentinel, 55)];
+        let s = State::new(FLAT, &pieces, 1, 20, [0, 0], 0, 200);
+        assert_eq!(e.evaluate(&s, 1), 20);
+        assert_eq!(e.evaluate(&s, 2), -20);
+        // Deux Avant-gardes : 4, plafonné à la défense de la Sentinelle (3).
+        let pieces = [piece(1, Kind::Vanguard, 54), piece(1, Kind::Vanguard, 56), piece(2, Kind::Sentinel, 55)];
+        let s = State::new(FLAT, &pieces, 1, 20, [0, 0], 0, 200);
+        assert_eq!(e.evaluate(&s, 1), 30);
     }
 }
