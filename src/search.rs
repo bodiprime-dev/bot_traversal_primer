@@ -20,6 +20,8 @@ const INF: i32 = 1_000_000_000;
 const QPLIES: u8 = 4;
 /// Taille de la table de transposition (puissance de 2).
 const TT_BITS: usize = 17;
+/// Distance maximale à la racine suivie pour les killers.
+const MAX_PLY: usize = 64;
 
 /// Réglages de la recherche.
 #[derive(Clone, Copy, Debug)]
@@ -43,11 +45,16 @@ pub struct Config {
     /// `Eval::hunts`) examinés en plus du faisceau, à la racine et à chaque nœud de
     /// profondeur ≥ 2.
     pub hunt: usize,
+    /// Tri des coups calmes par les coups « killers » (deux derniers coups calmes qui ont coupé
+    /// à la même distance de la racine) puis par l'historique (score par camp, case de départ
+    /// et d'arrivée, + profondeur² à chaque coupure) ; l'avancée vers la sortie (tri du SDK)
+    /// départage. `false` : avancée seule.
+    pub history: bool,
 }
 
 impl Default for Config {
     fn default() -> Config {
-        Config { max_depth: 16, beam: 20, weights: Weights::default(), guard_root: 0, guard_tree: 0, hunt: 0 }
+        Config { max_depth: 16, beam: 20, weights: Weights::default(), guard_root: 0, guard_tree: 0, hunt: 0, history: false }
     }
 }
 
@@ -90,6 +97,11 @@ pub struct Piolet {
     /// Garde-fous : on repart de zéro si la position n'est pas la suite de la précédente.
     last_ply: Option<u16>,
     last_heights: Option<[u8; 100]>,
+    /// Historique des coups calmes : `[camp][départ][arrivée]`, conservé d'un coup à l'autre
+    /// (divisé par 2 à chaque coup, remis à zéro à chaque partie).
+    history: Vec<i32>,
+    /// Coups killers, par distance à la racine.
+    killers: Vec<[Option<Move>; 2]>,
 }
 
 fn splitmix(state: &mut u64) -> u64 {
@@ -113,7 +125,15 @@ impl Piolet {
         let mut seed = 0xC0FF_EE15_600D_F00D_u64;
         // 6 types (camp × pièce) × 100 cases, + 4 clés annexes (trait, scores, sortis).
         let zob = (0..6 * 100 + 4).map(|_| splitmix(&mut seed)).collect();
-        Piolet { cfg, tt: vec![EMPTY; 1 << TT_BITS], zob, last_ply: None, last_heights: None }
+        Piolet {
+            cfg,
+            tt: vec![EMPTY; 1 << TT_BITS],
+            zob,
+            last_ply: None,
+            last_heights: None,
+            history: vec![0; 2 * 100 * 100],
+            killers: vec![[None; 2]; MAX_PLY],
+        }
     }
 
     fn hash(&self, s: &State) -> u64 {
@@ -141,7 +161,11 @@ impl Piolet {
         };
         if fresh {
             self.tt.iter_mut().for_each(|e| *e = EMPTY);
+            self.history.iter_mut().for_each(|h| *h = 0);
+        } else {
+            self.history.iter_mut().for_each(|h| *h /= 2);
         }
+        self.killers.iter_mut().for_each(|k| *k = [None; 2]);
         self.last_ply = Some(state.ply);
         self.last_heights = Some(state.heights);
 
@@ -151,7 +175,7 @@ impl Piolet {
         }
         let ctx = Ctx::with_insight(&state.heights, 3, Tuning::default());
         let eval = Eval::new(&state.heights, self.cfg.weights);
-        let mut s = Search { owner: self, ctx: &ctx, eval: &eval, stop, nodes: 0 };
+        let mut s = Search { owner: self, ctx: &ctx, eval: &eval, stop, nodes: 0, root_ply: state.ply };
         s.root(state, moves)
     }
 }
@@ -162,6 +186,8 @@ struct Search<'a> {
     eval: &'a Eval,
     stop: fn() -> bool,
     nodes: u64,
+    /// Demi-coup de la racine : `state.ply - root_ply` est la distance à la racine.
+    root_ply: u16,
 }
 
 impl Search<'_> {
@@ -171,6 +197,36 @@ impl Search<'_> {
             return Err(Timeout);
         }
         Ok(())
+    }
+
+    /// Indice d'un coup calme dans l'historique.
+    fn history_idx(state: &State, m: &Move) -> usize {
+        (state.to_move as usize - 1) * 10_000 + state.piece(m.piece).sq as usize * 100 + m.to as usize
+    }
+
+    /// Distance à la racine (bornée pour indexer les killers).
+    fn ply(&self, state: &State) -> usize {
+        ((state.ply - self.root_ply) as usize).min(MAX_PLY - 1)
+    }
+
+    /// Trie les coups calmes (après sorties et captures, déjà en tête) par killers puis
+    /// historique ; tri stable : l'avancée (ordre du SDK) départage.
+    fn order_quiet(&self, state: &State, moves: &mut [Move]) {
+        let k = moves.iter().position(|m| matches!(m.kind, MoveKind::Move | MoveKind::Pass)).unwrap_or(moves.len());
+        let killers = self.owner.killers[self.ply(state)];
+        moves[k..].sort_by_key(|m| {
+            if m.kind != MoveKind::Move {
+                return Reverse((0, i32::MIN));
+            }
+            let rank = if killers[0] == Some(*m) {
+                2
+            } else if killers[1] == Some(*m) {
+                1
+            } else {
+                0
+            };
+            Reverse((rank, self.owner.history[Self::history_idx(state, m)]))
+        });
     }
 
     fn same(a: &Move, b: &Move) -> bool {
@@ -313,6 +369,9 @@ impl Search<'_> {
         }
 
         let mut moves = self.ctx.ordered(state);
+        if self.owner.cfg.history {
+            self.order_quiet(state, &mut moves);
+        }
         if let Some(t) = tt_move {
             if let Some(i) = moves.iter().position(|m| *m == t) {
                 moves[..=i].rotate_right(1);
@@ -357,6 +416,16 @@ impl Search<'_> {
             }
             alpha = alpha.max(score);
             if alpha >= beta {
+                if self.owner.cfg.history && m.kind == MoveKind::Move {
+                    let h = &mut self.owner.history[Self::history_idx(state, m)];
+                    *h = h.saturating_add(depth as i32 * depth as i32);
+                    let ply = self.ply(state);
+                    let k = &mut self.owner.killers[ply];
+                    if k[0] != Some(*m) {
+                        k[1] = k[0];
+                        k[0] = Some(*m);
+                    }
+                }
                 break;
             }
         }
