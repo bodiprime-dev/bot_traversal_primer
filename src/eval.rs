@@ -89,6 +89,12 @@ pub struct Weights {
     /// case au coup suivant) si elle est capturée. Valorise la deuxième ligne derrière le
     /// convoi, l'Explorateur surtout (allonge, diagonales, bonds).
     pub cover: i32,
+    /// Puissance de la couverture : 0, binaire (une alliée peut attaquer la case). Sinon la
+    /// couverture vaut `cover × Force × min(puissance, cover_cap) / cover_cap`, où la puissance
+    /// est la meilleure attaque de reprise (R7.3) : Force du repreneur, ±1 selon la hauteur, +
+    /// Force de nos autres pièces voisines de la case. Une puissance de 3 reprend même une
+    /// Sentinelle seule.
+    pub cover_cap: i32,
 }
 
 impl Default for Weights {
@@ -130,6 +136,7 @@ impl Weights {
             tempo_race: 0,
             tempo_cap: 6,
             cover: 0,
+            cover_cap: 0,
         }
     }
 }
@@ -510,13 +517,37 @@ impl Eval {
         if let Some(reach) = &self.reach {
             let pieces = state.pieces();
             for (i, p) in pieces.iter().enumerate() {
-                let covered = pieces.iter().enumerate().any(|(j, q)| {
-                    j != i && q.owner == p.owner && reach[q.kind.strength() as usize - 1][q.sq as usize] >> p.sq & 1 == 1
-                });
-                if covered {
-                    let v = w.cover * p.kind.strength() as i32;
-                    total += if p.owner == side { v } else { -v };
-                }
+                let reaches = |q: &Piece| reach[q.kind.strength() as usize - 1][q.sq as usize] >> p.sq & 1 == 1;
+                let strength = p.kind.strength() as i32;
+                let v = if w.cover_cap == 0 {
+                    let covered = pieces.iter().enumerate().any(|(j, q)| j != i && q.owner == p.owner && reaches(q));
+                    if covered {
+                        w.cover * strength
+                    } else {
+                        0
+                    }
+                } else {
+                    // Meilleure reprise si `p` est prise : le repreneur + nos autres voisines de la case.
+                    let power = pieces
+                        .iter()
+                        .enumerate()
+                        .filter(|&(j, q)| j != i && q.owner == p.owner && reaches(q))
+                        .map(|(j, q)| {
+                            let (hq, hs) = (state.heights[q.sq as usize], state.heights[p.sq as usize]);
+                            let height = (hq > hs) as i32 - (hq < hs) as i32;
+                            let support: i32 = neighbors_of(p.sq)
+                                .iter()
+                                .filter_map(|&nb| state.at(nb).map(|k| (k as usize, state.piece(k))))
+                                .filter(|&(k, r)| k != j && k != i && r.owner == p.owner)
+                                .map(|(_, r)| r.kind.strength() as i32)
+                                .sum();
+                            q.kind.strength() as i32 + height + support
+                        })
+                        .max()
+                        .unwrap_or(0);
+                    w.cover * strength * power.clamp(0, w.cover_cap) / w.cover_cap
+                };
+                total += if p.owner == side { v } else { -v };
             }
         }
         if w.tempo_race != 0 && nobody_out {
@@ -903,6 +934,24 @@ mod sentinel_tests {
         let pieces = [piece(2, Kind::Explorer, 44), piece(2, Kind::Sentinel, 55)];
         let s = State::new(FLAT, &pieces, 1, 20, [0, 0], 0, 200);
         assert_eq!(e.evaluate(&s, 1), -40);
+    }
+
+    #[test]
+    fn cover_power_counts_the_recapture_strength() {
+        let e = Eval::new(&FLAT, Weights { cover: 30, cover_cap: 3, ..nothing() });
+        // Sentinelle rouge en 55, couverte par un Explorateur seul (44, diagonale) : puissance
+        // 1 -> 30 × 3 × 1/3 = 30. L'Explorateur, couvert par la Sentinelle (puissance 3, plafond) :
+        // 30 × 1 × 3/3 = 30.
+        let pieces = [piece(1, Kind::Explorer, 44), piece(1, Kind::Sentinel, 55)];
+        let s = State::new(FLAT, &pieces, 1, 20, [0, 0], 0, 200);
+        assert_eq!(e.evaluate(&s, 1), 60);
+        // + une Avant-garde voisine de la Sentinelle (56) : la reprise de l'Explorateur vaut
+        // 1 + 2 = 3 (plafond) -> 90 pour la Sentinelle. L'Avant-garde est couverte par la
+        // Sentinelle (3 + 0 : le seul autre voisin de 56 est la Sentinelle elle-même) -> 60 ;
+        // l'Explorateur, par la Sentinelle (3) et l'Avant-garde (2 + 0) -> 30.
+        let pieces = [piece(1, Kind::Explorer, 44), piece(1, Kind::Sentinel, 55), piece(1, Kind::Vanguard, 56)];
+        let s = State::new(FLAT, &pieces, 1, 20, [0, 0], 0, 200);
+        assert_eq!(e.evaluate(&s, 1), 90 + 60 + 30);
     }
 
     #[test]
