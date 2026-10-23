@@ -269,6 +269,28 @@ reprenable : un face-à-face que l'évaluation juge nul et que Rouge finit par g
 Conclusion : le problème de Bleu n'est pas tactique (captures) mais le temps perdu à chaque
 coup, que l'évaluation ne mesure pas.
 
+## Course en temps (validée, par défaut : tempo_race 25)
+
+Par demi-coup d'avance de notre meilleure Sentinelle sur la meilleure adverse (tours avec
+blocages, trait inclus), borné à ± 6, tant que personne n'est sorti.
+
+| Budget | Référence (faisceau 20) | tempo 25 | Améliorées / dégradées | En Bleu |
+|---|---|---|---|---|
+| 3 000 | 69,9 % | 70,4 % | 77 / 74 | 63,2 → 67,5 % |
+| 3 600 | 69,1 % | 76,0 % | 91 / 63 | 60,8 → 69,8 % |
+| 4 500 | 71,6 % | 76,2 % | 86 / 67 | — |
+
+Cumul z ≈ +2,3. Arène wasm, 400 parties contre `montblanc` : **72,5 %** (Elo +168 ± 40), 0 faute.
+tempo 10 : neutre ; tempo 25 + distance exacte : neutre (Bleu mieux, Rouge moins bien).
+
+## Rôles des pièces (400 parties, examples/duel.rs --list)
+
+- La Sentinelle de Piolet fait 238 des 411 captures : elle se bat au lieu de courir.
+- Double sortie sans Sentinelle : 3 victoires de Piolet, 12 de Mont Blanc.
+- Reprises (capture juste après une capture adverse) : Piolet 83, Mont Blanc 117. Un tiers des
+  captures d'Explorateur sont des reprises (allonge, diagonales, bonds, + Force des alliés
+  voisins de la cible). D'où le terme de couverture (`cover`).
+
 ## Prochaine étape : évaluation par poids d'actions
 
 Remplacer `Ctx::evaluate` par notre fonction, avec une structure de poids réglable, par exemple :

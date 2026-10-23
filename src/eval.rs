@@ -95,7 +95,9 @@ impl Default for Weights {
     fn default() -> Weights {
         // `start_race` reste à 0 : en A/B (400 parties contre Mont Blanc), elle dégrade la course
         // des Sentinelles (voir HANDOFF.md). `exit_race` seule : 49,9 % -> 55,8 %.
-        Weights { start_race: 0, exit_race: 400, race_spread: 3, race_spread_per: 4, ..Weights::sdk() }
+        // `tempo_race` 25 : 254 parties améliorées / 204 dégradées sur 3 budgets (z ≈ +2,3),
+        // surtout en Bleu ; arène wasm 70,6 % -> 72,5 %.
+        Weights { start_race: 0, exit_race: 400, race_spread: 3, race_spread_per: 4, tempo_race: 25, ..Weights::sdk() }
     }
 }
 
