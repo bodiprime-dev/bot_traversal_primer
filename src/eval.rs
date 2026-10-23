@@ -85,6 +85,10 @@ pub struct Weights {
     /// (la course du SDK, `sentinel_race`, est un tout ou rien à 5 tours de la sortie).
     pub tempo_race: i32,
     pub tempo_cap: i32,
+    /// Couverture : par point de Force d'une pièce qu'une alliée peut reprendre (attaquer sa
+    /// case au coup suivant) si elle est capturée. Valorise la deuxième ligne derrière le
+    /// convoi, l'Explorateur surtout (allonge, diagonales, bonds).
+    pub cover: i32,
 }
 
 impl Default for Weights {
@@ -123,12 +127,40 @@ impl Weights {
             sentinel_threat: 0,
             tempo_race: 0,
             tempo_cap: 6,
+            cover: 0,
         }
     }
 }
 
 /// Coût de marche minimal depuis `from` vers chaque case, borné à `budget` (`u8::MAX` au-delà) :
 /// ce qu'une pièce atteint en un tour sur le relief seul (R4).
+/// Cases qu'une pièce `kind` attaque en un tour depuis chaque case, sur le relief seul : la
+/// dernière marche entre sur la case attaquée, donc coût de marche ≤ Mouvement ; plus les
+/// diagonales et bonds de l'Explorateur (R5). Champ de bits : bit `c` = case `c`.
+pub fn attack_reach(heights: &[u8; SQUARES], kind: Kind) -> [u128; SQUARES] {
+    let mut out = [0u128; SQUARES];
+    for sq in 0..SQUARES as u8 {
+        let dist = walk(heights, sq, kind.movement());
+        let mut bits = 0u128;
+        for (c, &d) in dist.iter().enumerate() {
+            if d != u8::MAX && c != sq as usize {
+                bits |= 1 << c;
+            }
+        }
+        if kind == Kind::Explorer {
+            let (x, y) = ((sq as usize % SIZE) as i32, (sq as usize / SIZE) as i32);
+            for (dx, dy) in [(1, 1), (1, -1), (-1, 1), (-1, -1), (0, 2), (2, 0), (0, -2), (-2, 0)] {
+                let (nx, ny) = (x + dx, y + dy);
+                if (0..SIZE as i32).contains(&nx) && (0..SIZE as i32).contains(&ny) {
+                    bits |= 1 << (ny * SIZE as i32 + nx);
+                }
+            }
+        }
+        out[sq as usize] = bits;
+    }
+    out
+}
+
 fn walk(heights: &[u8; SQUARES], from: u8, budget: u8) -> [u8; SQUARES] {
     let mut dist = [u8::MAX; SQUARES];
     dist[from as usize] = 0;
@@ -212,6 +244,10 @@ pub struct Eval {
     w: Weights,
     /// Tampon de coups réutilisé (pas d'allocation par évaluation).
     buf: RefCell<Vec<Move>>,
+    /// `reach[type][case]` : cases qu'une pièce de ce type attaque en un tour depuis cette case
+    /// (relief seul : marche de coût ≤ Mouvement, plus diagonales et bonds de l'Explorateur),
+    /// si `cover`.
+    reach: Option<Box<[[u128; SQUARES]; 3]>>,
 }
 
 impl Eval {
@@ -220,7 +256,8 @@ impl Eval {
             let table = |o| [Kind::Explorer, Kind::Vanguard, Kind::Sentinel].map(|k| exact_turns(heights, o, k));
             Box::new([table(1), table(2)])
         });
-        Eval { costs: [exit_costs(heights, 1), exit_costs(heights, 2)], exact, w, buf: RefCell::new(Vec::with_capacity(64)) }
+        let reach = (w.cover != 0).then(|| Box::new([Kind::Explorer, Kind::Vanguard, Kind::Sentinel].map(|k| attack_reach(heights, k))));
+        Eval { costs: [exit_costs(heights, 1), exit_costs(heights, 2)], exact, w, buf: RefCell::new(Vec::with_capacity(64)), reach }
     }
 
     #[inline]
@@ -466,6 +503,18 @@ impl Eval {
                 two[o] = [t, two[o][0]];
             } else if t < two[o][1] {
                 two[o][1] = t;
+            }
+        }
+        if let Some(reach) = &self.reach {
+            let pieces = state.pieces();
+            for (i, p) in pieces.iter().enumerate() {
+                let covered = pieces.iter().enumerate().any(|(j, q)| {
+                    j != i && q.owner == p.owner && reach[q.kind.strength() as usize - 1][q.sq as usize] >> p.sq & 1 == 1
+                });
+                if covered {
+                    let v = w.cover * p.kind.strength() as i32;
+                    total += if p.owner == side { v } else { -v };
+                }
             }
         }
         if w.tempo_race != 0 && nobody_out {
@@ -833,6 +882,24 @@ mod sentinel_tests {
         let pieces = [piece(1, Kind::Sentinel, 57), piece(2, Kind::Sentinel, 72)];
         let s = State::new(FLAT, &pieces, 1, 20, [0, 0], 0, 200);
         assert_eq!(e.evaluate(&s, 1), 30);
+    }
+
+    #[test]
+    fn cover_values_pieces_an_ally_can_recapture() {
+        let e = Eval::new(&FLAT, Weights { cover: 10, ..nothing() });
+        // Explorateur rouge en 44, Sentinelle rouge en 55 : diagonale, l'Explorateur couvre la
+        // Sentinelle (+30) ; la Sentinelle couvre l'Explorateur (2 de marche ≤ 3 : +10).
+        let pieces = [piece(1, Kind::Explorer, 44), piece(1, Kind::Sentinel, 55)];
+        let s = State::new(FLAT, &pieces, 1, 20, [0, 0], 0, 200);
+        assert_eq!(e.evaluate(&s, 1), 40);
+        // Trop loin l'une de l'autre (Sentinelle : 3 de Mouvement ; ici 6 de distance) : rien.
+        let pieces = [piece(1, Kind::Sentinel, 0), piece(1, Kind::Sentinel, 6)];
+        let s = State::new(FLAT, &pieces, 1, 20, [0, 0], 0, 200);
+        assert_eq!(e.evaluate(&s, 1), 0);
+        // Symétrique : la même paire bleue compte contre Rouge.
+        let pieces = [piece(2, Kind::Explorer, 44), piece(2, Kind::Sentinel, 55)];
+        let s = State::new(FLAT, &pieces, 1, 20, [0, 0], 0, 200);
+        assert_eq!(e.evaluate(&s, 1), -40);
     }
 
     #[test]

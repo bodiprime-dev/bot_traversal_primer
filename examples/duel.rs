@@ -178,6 +178,7 @@ fn main() {
         sentinel_threat: arg(&args, "--threat", Weights::default().sentinel_threat as u64) as i32,
         tempo_race: arg(&args, "--tempo", Weights::default().tempo_race as u64) as i32,
         tempo_cap: arg(&args, "--tempo-cap", Weights::default().tempo_cap as u64) as i32,
+        cover: arg(&args, "--cover", Weights::default().cover as u64) as i32,
         ..Weights::default()
     };
     let cfg = Config {
@@ -244,8 +245,8 @@ fn main() {
     let score = (results.iter().filter(|&&r| r == 1).count() as f64 + 0.5 * results.iter().filter(|&&r| r == 0).count() as f64)
         / all.len() as f64;
     println!(
-        "faisceau {} (historique : {}) ; parades : {} à la racine, {} par nœud ; chasse : {} ; tours exacts : {} ; menace : {} ; course en temps : {} (± {})",
-        cfg.beam, cfg.history, cfg.guard_root, cfg.guard_tree, cfg.hunt, weights.exact_turns, weights.sentinel_threat, weights.tempo_race, weights.tempo_cap
+        "faisceau {} (historique : {}) ; parades : {} à la racine, {} par nœud ; chasse : {} ; tours exacts : {} ; menace : {} ; course en temps : {} (± {}) ; couverture : {}",
+        cfg.beam, cfg.history, cfg.guard_root, cfg.guard_tree, cfg.hunt, weights.exact_turns, weights.sentinel_threat, weights.tempo_race, weights.tempo_cap, weights.cover
     );
     println!(
         "Piolet ({nodes} nœuds, start_race {} / exit_race {} / spread {} + d/{} / wall {} / pressure {} / alive {}) contre Mont Blanc : {} parties",
