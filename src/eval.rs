@@ -20,10 +20,22 @@ use traversal_bot::core::movegen::{neighbors_of, step_cost};
 use traversal_bot::core::state::MAX_PIECES;
 use traversal_bot::core::{Kind, State};
 
-/// Poids de l'évaluation. Les valeurs par défaut sont celles du SDK (`Tuning::default()` et
-/// les constantes en dur de `Ctx::evaluate`).
+/// Poids de l'évaluation. `Weights::sdk()` reproduit l'évaluation du SDK (`Tuning::default()`
+/// et les constantes en dur de `Ctx::evaluate`) ; `Weights::default()` y ajoute la course à
+/// la sortie décisive (`start_race`, `exit_race`).
 #[derive(Clone, Copy, Debug)]
 pub struct Weights {
+    /// Course des Sentinelles quand personne n'est sorti (voir `Eval::start_race`) : valeur
+    /// d'une course gagnée à coup sûr. 0 : celle du SDK (`sentinel_race`).
+    pub start_race: i32,
+    /// Course à la sortie décisive après une première sortie (voir `Eval::exit_race`) : « ne
+    /// pas sortir sans plan ». 0 : désactivée (le SDK compte l'écart de points brut).
+    pub exit_race: i32,
+    /// Incertitude (en demi-coups) d'une course : `race_spread + d / race_spread_per`, où `d`
+    /// est le délai de l'événement le plus proche. Plus la course est lointaine, plus une
+    /// même marge compte peu.
+    pub race_spread: i32,
+    pub race_spread_per: i32,
     /// Valeur d'un point marqué (sortie).
     pub score: i32,
     /// Valeur d'une pièce sur le plateau, par point de Force.
@@ -49,7 +61,20 @@ pub struct Weights {
 
 impl Default for Weights {
     fn default() -> Weights {
+        // `start_race` reste à 0 : en A/B (400 parties contre Mont Blanc), elle dégrade la course
+        // des Sentinelles (voir HANDOFF.md). `exit_race` seule : 49,9 % -> 55,8 %.
+        Weights { start_race: 0, exit_race: 400, race_spread: 3, race_spread_per: 4, ..Weights::sdk() }
+    }
+}
+
+impl Weights {
+    /// L'évaluation du SDK, au bit près (test `same_as_sdk`).
+    pub fn sdk() -> Weights {
         Weights {
+            start_race: 0,
+            exit_race: 0,
+            race_spread: 3,
+            race_spread_per: 4,
             score: 100,
             strength: 14,
             progress_horizon: 7,
@@ -161,10 +186,20 @@ impl Eval {
         let w = &self.w;
         let nobody_out = state.finished == 0;
         let other = if side == 1 { 2 } else { 1 };
-        let mut total = w.score * (state.scores[side as usize - 1] as i32 - state.scores[other as usize - 1] as i32);
+        // Avec la course à la sortie, les points marqués (après une première sortie) ne valent
+        // que par la course qu'ils ouvrent : l'écart de points brut n'est plus compté.
+        let mut total = if w.exit_race == 0 {
+            w.score * (state.scores[side as usize - 1] as i32 - state.scores[other as usize - 1] as i32)
+        } else {
+            0
+        };
         let turns = self.piece_turns(state);
         let mut first = [i32::MAX; 2]; // pièce la plus rapide de chaque camp
         let mut sentinel = [i32::MAX; 2]; // Sentinelle la plus rapide de chaque camp
+        // Tours de la pièce la plus rapide de chaque camp, par Force (indices 1 à 3).
+        let mut fastest = [[i32::MAX; 4]; 2];
+        // Tours des deux pièces les plus rapides de chaque camp, toutes Forces confondues.
+        let mut two = [[i32::MAX; 2]; 2];
         for (i, p) in state.pieces().iter().enumerate() {
             let strength = p.kind.strength() as i32;
             let t = turns[i];
@@ -179,11 +214,100 @@ impl Eval {
             if p.kind == Kind::Sentinel {
                 sentinel[o] = sentinel[o].min(t);
             }
+            let f = &mut fastest[o][strength as usize];
+            *f = (*f).min(t);
+            if t < two[o][0] {
+                two[o] = [t, two[o][0]];
+            } else if t < two[o][1] {
+                two[o][1] = t;
+            }
         }
-        if nobody_out {
+        if !nobody_out {
+            if w.exit_race != 0 {
+                total += self.exit_race(state, side, &fastest);
+            }
+        } else if w.start_race != 0 {
+            total += self.start_race(state, side, &fastest, &two);
+        } else {
             total += self.sentinel_race(state, side, &first, &sentinel);
         }
         total
+    }
+
+    /// Demi-coups avant que `owner` puisse jouer le `turns`-ième coup d'une pièce : le camp
+    /// au trait joue le premier.
+    #[inline]
+    fn plies(state: &State, owner: u8, turns: i32) -> i32 {
+        match turns {
+            i32::MAX => i32::MAX,
+            t if state.to_move == owner => 2 * t - 1,
+            t => 2 * t,
+        }
+    }
+
+    /// Chance (en millièmes) qu'un événement prévu dans `mine` demi-coups arrive avant un
+    /// autre prévu dans `theirs` : 1/2 à marge nulle, linéaire jusqu'à la certitude à une
+    /// marge de `±spread`, où `spread` grandit avec le délai (une course lointaine est
+    /// incertaine : blocages, captures, détours).
+    fn first_chance(&self, mine: i32, theirs: i32) -> i32 {
+        match (mine, theirs) {
+            (i32::MAX, _) => 0,
+            (_, i32::MAX) => 1000,
+            _ => {
+                let spread = self.w.race_spread + mine.min(theirs) / self.w.race_spread_per.max(1);
+                (500 + 500 * (theirs - mine) / spread.max(1)).clamp(0, 1000)
+            }
+        }
+    }
+
+    /// Course des Sentinelles, personne n'est sorti, du point de vue de `side`
+    /// (`fastest[camp][Force]` : tours de la pièce la plus rapide de cette Force ;
+    /// `two[camp]` : tours des deux plus rapides).
+    ///
+    /// Ma Sentinelle gagne si elle sort avant la Sentinelle adverse (R8.2) ET avant que
+    /// l'adversaire ait fait DEUX sorties. Une seule sortie adverse plus faible ne la sauve
+    /// pas : elle annule la victoire immédiate, mais ma Sentinelle sort ensuite et la partie
+    /// s'arrête au score, 3 contre 1 ou 2 (R8.1). Une pièce bouge par tour : deux sorties
+    /// coûtent la SOMME des tours des deux pièces. Chaque camp a sa chance ; la valeur est
+    /// l'écart des deux.
+    fn start_race(&self, state: &State, side: u8, fastest: &[[i32; 4]; 2], two: &[[i32; 2]; 2]) -> i32 {
+        let other = if side == 1 { 2 } else { 1 };
+        let chance = |me: u8| {
+            let them = if me == 1 { 2 } else { 1 };
+            let sentinel = Eval::plies(state, me, fastest[me as usize - 1][3]);
+            let [a, b] = two[them as usize - 1];
+            let double = if b == i32::MAX { i32::MAX } else { a + b };
+            let rescue = fastest[them as usize - 1][3].min(double);
+            self.first_chance(sentinel, Eval::plies(state, them, rescue))
+        };
+        self.w.start_race * (chance(side) - chance(other)) / 1000
+    }
+
+    /// Course à la sortie décisive après une première sortie, de Force `a` (R8.1), du point
+    /// de vue de `side` : la prochaine sortie termine la partie. Le camp en tête gagne avec
+    /// n'importe quelle sortie (ou à la limite de coups) ; le camp mené doit sortir une pièce
+    /// de Force > `a` avant lui (= `a` : nulle). C'est la règle « ne pas sortir sans plan » :
+    /// une sortie qui ouvre une course perdue est notée comme telle, et la recherche l'évite.
+    fn exit_race(&self, state: &State, side: u8, fastest: &[[i32; 4]; 2]) -> i32 {
+        let any = |o: u8| fastest[o as usize - 1][1..].iter().copied().min().unwrap_or(i32::MAX);
+        let race = self.w.exit_race;
+        let leader: u8 = if state.scores[0] > state.scores[1] { 1 } else { 2 };
+        let trailer = if leader == 1 { 2 } else { 1 };
+        let lead = state.scores[leader as usize - 1] as usize;
+        // La limite de coups départage au score : elle vaut une sortie du camp en tête.
+        let remaining = state.move_limit as i32 - state.ply as i32 + 1;
+        let lead_time = Eval::plies(state, leader, any(leader)).min(remaining);
+        let t = &fastest[trailer as usize - 1];
+        let stronger = t.get(lead + 1..).and_then(|s| s.iter().copied().min()).unwrap_or(i32::MAX);
+        let equal = t.get(lead).copied().unwrap_or(i32::MAX);
+        let lose = self.first_chance(Eval::plies(state, trailer, stronger), lead_time);
+        let draw = (1000 - lose) * self.first_chance(Eval::plies(state, trailer, equal), lead_time) / 1000;
+        let v = race * (1000 - lose - draw - lose) / 1000;
+        if side == leader {
+            v
+        } else {
+            -v
+        }
     }
 
     /// Course des Sentinelles (R8.2). Personne n'est sorti : une Sentinelle gagne si elle
@@ -233,7 +357,7 @@ mod tests {
         let (mut checked, mut after_exit) = (0, 0);
         for heights in boards() {
             let sdk = Ctx::with_insight(&heights, 3, Tuning::default());
-            let ours = Eval::new(&heights, Weights::default());
+            let ours = Eval::new(&heights, Weights::sdk());
             let mut s = new_game(heights);
             while !s.over {
                 for side in [1, 2] {
@@ -249,5 +373,95 @@ mod tests {
         assert!(checked > 10_000, "{checked} positions seulement");
         assert!(after_exit > 100, "{after_exit} positions après une sortie seulement");
         eprintln!("{checked} positions comparées, dont {after_exit} après une sortie");
+    }
+}
+
+#[cfg(test)]
+mod race_tests {
+    use super::*;
+    use crate::search::{Config, Piolet};
+    use traversal_bot::core::{apply_move, legal_moves, MoveKind, Piece};
+
+    const FLAT: [u8; SQUARES] = [1; SQUARES];
+
+    /// Seule la course compte (les deux phases) : les autres termes sont à zéro.
+    fn race_only() -> Weights {
+        Weights {
+            start_race: 400,
+            exit_race: 400,
+            strength: 0,
+            progress_base: 0,
+            progress_per_strength: 0,
+            sentinel_sq: 0,
+            ..Weights::default()
+        }
+    }
+
+    fn piece(owner: u8, kind: Kind, sq: u8) -> Piece {
+        Piece { owner, kind, sq }
+    }
+
+    /// Sur le plat, Rouge sort par la rangée 9, Bleu par la rangée 0 ; coût = rangées + 1.
+    /// Rouge au trait. Explorateur rouge sur la rangée de sortie (1 tour), Sentinelle rouge
+    /// rangée 5 (coût 5 : 2 tours), Sentinelle bleue rangée 4 (coût 5 : 2 tours).
+    fn exit_without_plan() -> State {
+        let pieces = [piece(1, Kind::Explorer, 92), piece(1, Kind::Sentinel, 57), piece(2, Kind::Sentinel, 42)];
+        State::new(FLAT, &pieces, 1, 20, [0, 0], 0, 200)
+    }
+
+    #[test]
+    fn exiting_into_a_lost_race_is_bad() {
+        let s = exit_without_plan();
+        let e = Eval::new(&s.heights, race_only());
+        // Sans sortie : la Sentinelle rouge (3 demi-coups) devance la bleue (4) : Rouge mène.
+        let before = e.evaluate(&s, 1);
+        assert!(before > 0, "avant : {before}");
+        // Sortir l'Explorateur ouvre la course au score : Bleu (au trait) sort sa Sentinelle,
+        // F3 > F1, avant la deuxième sortie rouge. Course perdue pour Rouge (d'un demi-coup :
+        // l'ampleur dépend de `race_spread`).
+        let exit = legal_moves(&s).into_iter().find(|m| m.kind == MoveKind::Exit).expect("sortie");
+        let after = apply_move(&s, &exit);
+        assert!(e.evaluate(&after, 1) < 0, "après : {}", e.evaluate(&after, 1));
+        assert_eq!(e.evaluate(&after, 2), -e.evaluate(&after, 1));
+    }
+
+    #[test]
+    fn search_does_not_exit_without_a_plan() {
+        let s = exit_without_plan();
+        let moves = legal_moves(&s);
+        let never = || false;
+        let pick = Piolet::new(Config { max_depth: 4, ..Config::default() }).choose(&s, &moves, never);
+        assert_ne!(moves[pick.index].kind, MoveKind::Exit, "Piolet sort sans plan");
+    }
+
+    #[test]
+    fn a_weaker_enemy_exit_does_not_stop_the_sentinel() {
+        // Personne n'est sorti. Sentinelle rouge à 2 tours ; Bleu n'a qu'un Explorateur à
+        // 1 tour et une Sentinelle lointaine. Si Bleu sort l'Explorateur, la Sentinelle rouge
+        // sort ensuite et gagne 3 à 1 : la course est rouge (le SDK la jugeait annulée).
+        let pieces = [piece(1, Kind::Sentinel, 57), piece(2, Kind::Explorer, 3), piece(2, Kind::Sentinel, 82)];
+        let s = State::new(FLAT, &pieces, 1, 20, [0, 0], 0, 200);
+        let e = Eval::new(&s.heights, race_only());
+        assert!(e.evaluate(&s, 1) >= 300, "{}", e.evaluate(&s, 1));
+        // Même avec deux Explorateurs bleus à 1 tour : Bleu sort aux demi-coups 2 et 4, la
+        // Sentinelle rouge au 3, entre les deux. Rouge gagne encore 3 à 1.
+        let pieces = [piece(1, Kind::Sentinel, 57), piece(2, Kind::Explorer, 3), piece(2, Kind::Explorer, 4), piece(2, Kind::Sentinel, 82)];
+        let s = State::new(FLAT, &pieces, 1, 20, [0, 0], 0, 200);
+        assert!(e.evaluate(&s, 1) > 0, "{}", e.evaluate(&s, 1));
+        // Sentinelle rouge rangée 3 (3 tours, demi-coup 5) : les deux sorties bleues passent
+        // avant, la course n'est plus rouge.
+        let pieces = [piece(1, Kind::Sentinel, 37), piece(2, Kind::Explorer, 3), piece(2, Kind::Explorer, 4), piece(2, Kind::Sentinel, 82)];
+        let s = State::new(FLAT, &pieces, 1, 20, [0, 0], 0, 200);
+        assert!(e.evaluate(&s, 1) <= 0, "{}", e.evaluate(&s, 1));
+    }
+
+    #[test]
+    fn leader_wins_the_race_when_trailer_has_nothing_stronger() {
+        // Rouge a sorti une Avant-garde (2 points) ; Bleu n'a plus que des Explorateurs : il
+        // ne peut plus que perdre, même en sortant le premier.
+        let pieces = [piece(1, Kind::Explorer, 12), piece(2, Kind::Explorer, 5), piece(2, Kind::Explorer, 6)];
+        let s = State::new(FLAT, &pieces, 2, 40, [2, 0], 1, 200);
+        let e = Eval::new(&s.heights, race_only());
+        assert_eq!(e.evaluate(&s, 1), 400);
     }
 }

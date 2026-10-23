@@ -3,6 +3,7 @@
 //!
 //! ```text
 //! cargo run --release --example duel -- --games 400 --nodes 3600
+//! cargo run --release --example duel -- --start 0 --race 0   # évaluation du SDK (référence)
 //! ```
 //!
 //! Pas de fuel en natif : Piolet est borné par un budget de nœuds (`--nodes`, ≈ 3 600 en
@@ -17,6 +18,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use piolet::boards;
+use piolet::eval::Weights;
 use piolet::search::{Config, Piolet};
 use traversal_bot::core::{apply_move, choose_move, legal_moves, new_game, Kind, Level, MoveKind, Rng};
 
@@ -65,14 +67,16 @@ struct Exit {
 }
 
 struct Game {
+    /// Numéro de la partie (carte `index / 2`, Piolet en rouge si pair).
+    index: usize,
     /// 1 : Piolet gagne, 0 : nulle, -1 : Piolet perd.
     result: i32,
     reason: &'static str,
     exits: Vec<Exit>,
 }
 
-fn play(board: [u8; 100], piolet_side: u8, nodes: u64) -> Game {
-    let mut bot = Piolet::new(Config::default());
+fn play(board: [u8; 100], piolet_side: u8, nodes: u64, weights: Weights) -> Game {
+    let mut bot = Piolet::new(Config { weights, ..Config::default() });
     let mut s = new_game(board);
     let mut exits = Vec::new();
     while !s.over {
@@ -93,7 +97,7 @@ fn play(board: [u8; 100], piolet_side: u8, nodes: u64) -> Game {
         Some(w) if w == piolet_side => 1,
         Some(_) => -1,
     };
-    Game { result, reason: s.reason.map_or("?", |r| r.name()), exits }
+    Game { index: 0, result, reason: s.reason.map_or("?", |r| r.name()), exits }
 }
 
 fn arg(args: &[String], name: &str, default: u64) -> u64 {
@@ -122,6 +126,13 @@ fn main() {
     let games = arg(&args, "--games", 200) as usize;
     let nodes = arg(&args, "--nodes", 3600);
     let threads = arg(&args, "--threads", std::thread::available_parallelism().map_or(4, |n| n.get() as u64)) as usize;
+    let weights = Weights {
+        start_race: arg(&args, "--start", Weights::default().start_race as u64) as i32,
+        exit_race: arg(&args, "--race", Weights::default().exit_race as u64) as i32,
+        race_spread: arg(&args, "--spread", Weights::default().race_spread as u64) as i32,
+        race_spread_per: arg(&args, "--spread-per", Weights::default().race_spread_per as u64) as i32,
+        ..Weights::default()
+    };
     let boards = boards();
 
     let next = AtomicUsize::new(0);
@@ -134,17 +145,41 @@ fn main() {
                     break;
                 }
                 let side = if g % 2 == 0 { 1 } else { 2 };
-                let game = play(boards[(g / 2) % boards.len()], side, nodes);
+                let game = Game { index: g, ..play(boards[(g / 2) % boards.len()], side, nodes, weights) };
                 done.lock().unwrap().push(game);
             });
         }
     });
-    let all = done.into_inner().unwrap();
+    let mut all = done.into_inner().unwrap();
+    all.sort_by_key(|g| g.index);
+
+    // Une ligne par partie, pour comparer deux réglages partie par partie (`diff`).
+    if let Some(path) = args.iter().position(|a| a == "--list").and_then(|i| args.get(i + 1)) {
+        let lines: Vec<String> = all
+            .iter()
+            .map(|g| {
+                let exits: Vec<String> = g
+                    .exits
+                    .iter()
+                    .map(|e| format!("{}:{}@{}", if e.piolet { "P" } else { "M" }, &kind_name(e.kind)[..1], e.ply))
+                    .collect();
+                format!("{:>3} {:>2} {:<10} {}", g.index, g.result, g.reason, exits.join(" "))
+            })
+            .collect();
+        std::fs::write(path, lines.join("\n") + "\n").expect("écriture de --list");
+    }
 
     let results: Vec<i32> = all.iter().map(|g| g.result).collect();
     let score = (results.iter().filter(|&&r| r == 1).count() as f64 + 0.5 * results.iter().filter(|&&r| r == 0).count() as f64)
         / all.len() as f64;
-    println!("Piolet ({nodes} nœuds) contre Mont Blanc : {} parties", all.len());
+    println!(
+        "Piolet ({nodes} nœuds, start_race {} / exit_race {} / spread {} + d/{}) contre Mont Blanc : {} parties",
+        weights.start_race,
+        weights.exit_race,
+        weights.race_spread,
+        weights.race_spread_per,
+        all.len()
+    );
     println!("  total                         {}  — score {:.1} %", wdl(&results), 100.0 * score);
 
     let mut reasons: BTreeMap<&str, Vec<i32>> = BTreeMap::new();
