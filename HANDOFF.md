@@ -226,6 +226,9 @@ plus de cartes.
 | 3 600 nœuds | 42,8 % | 55,8 % | 60,1 % | **69,1 %** (z +4,0) | 60,9 % |
 | 3 000 nœuds | 41,1 % | 53,5 % | 67,0 % | **69,9 %** (z +4,5) | 60,4 % |
 
+**Arène wasm officielle, 400 parties contre `montblanc` : 70,6 %** (279 V / 7 N / 114 D,
+Elo +152 ± 39 ; version précédente 53,1 %), 0 faute, fuel moyen 42 % du budget.
+
 Le tri des coups calmes (SDK) ne regarde que l'avancée vers la sortie : à 10, les coups
 d'escorte et de défense n'étaient jamais examinés. Au-delà de 20, la recherche se disperse.
 
