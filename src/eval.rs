@@ -39,12 +39,11 @@ pub struct Weights {
     pub race_spread_per: i32,
     /// Valeur d'un point marqué (sortie).
     pub score: i32,
-    /// Valeur d'une pièce sur le plateau, par point de Force.
-    pub strength: i32,
-    /// Avancée : une pièce à `t` tours de la sortie vaut `(horizon - t) * (base + per_strength * F)`.
+    /// Valeur d'une pièce sur le plateau, par type : [Explorateur, Avant-garde, Sentinelle].
+    pub value: [i32; 3],
+    /// Avancée : une pièce à `t` tours de la sortie vaut `(progress_horizon - t) * progress[type]`.
     pub progress_horizon: i32,
-    pub progress_base: i32,
-    pub progress_per_strength: i32,
+    pub progress: [i32; 3],
     /// Sentinelle proche de la sortie (personne n'est sorti) : `(horizon - t)² * sentinel_sq`.
     pub sentinel_horizon: i32,
     pub sentinel_sq: i32,
@@ -108,6 +107,67 @@ impl Default for Weights {
 }
 
 impl Weights {
+    /// Noms des poids réglables par `set` / `get` (réglage automatique, options du duel).
+    pub const NAMES: [&'static str; 16] = [
+        "value_e",
+        "value_v",
+        "value_s",
+        "progress_e",
+        "progress_v",
+        "progress_s",
+        "progress_horizon",
+        "sentinel_horizon",
+        "sentinel_sq",
+        "sentinel_race",
+        "start_race",
+        "exit_race",
+        "tempo_race",
+        "tempo_cap",
+        "cover",
+        "cover_cap",
+    ];
+
+    fn slot(&mut self, name: &str) -> Option<&mut i32> {
+        Some(match name {
+            "value_e" => &mut self.value[0],
+            "value_v" => &mut self.value[1],
+            "value_s" => &mut self.value[2],
+            "progress_e" => &mut self.progress[0],
+            "progress_v" => &mut self.progress[1],
+            "progress_s" => &mut self.progress[2],
+            "progress_horizon" => &mut self.progress_horizon,
+            "sentinel_horizon" => &mut self.sentinel_horizon,
+            "sentinel_sq" => &mut self.sentinel_sq,
+            "sentinel_race" => &mut self.sentinel_race,
+            "start_race" => &mut self.start_race,
+            "exit_race" => &mut self.exit_race,
+            "tempo_race" => &mut self.tempo_race,
+            "tempo_cap" => &mut self.tempo_cap,
+            "cover" => &mut self.cover,
+            "cover_cap" => &mut self.cover_cap,
+            _ => return None,
+        })
+    }
+
+    /// Fixe un poids par son nom (voir `NAMES`).
+    pub fn set(&mut self, name: &str, value: i32) -> Result<(), String> {
+        *self.slot(name).ok_or_else(|| format!("poids inconnu : {name}"))? = value;
+        Ok(())
+    }
+
+    pub fn get(&self, name: &str) -> Option<i32> {
+        self.clone().slot(name).map(|v| *v)
+    }
+
+    /// Applique des réglages « nom=valeur,nom=valeur ».
+    pub fn apply(&mut self, overrides: &str) -> Result<(), String> {
+        for kv in overrides.split(',').filter(|s| !s.trim().is_empty()) {
+            let (k, v) = kv.split_once('=').ok_or_else(|| format!("attendu nom=valeur : {kv}"))?;
+            self.set(k.trim(), v.trim().parse().map_err(|_| format!("valeur invalide : {kv}"))?)?;
+        }
+        Ok(())
+    }
+
     /// L'évaluation du SDK, au bit près (test `same_as_sdk`).
     pub fn sdk() -> Weights {
         Weights {
@@ -116,10 +176,10 @@ impl Weights {
             race_spread: 3,
             race_spread_per: 4,
             score: 100,
-            strength: 14,
+            // SDK : 14 × Force, et 3 + 2 × Force par tour d'avance.
+            value: [14, 28, 42],
             progress_horizon: 7,
-            progress_base: 3,
-            progress_per_strength: 2,
+            progress: [5, 7, 9],
             sentinel_horizon: 6,
             sentinel_sq: 5,
             sentinel_race: 150,
@@ -478,8 +538,8 @@ impl Eval {
         for (i, p) in state.pieces().iter().enumerate() {
             let strength = p.kind.strength() as i32;
             let t = turns[i];
-            let mut v = w.strength * strength
-                + (w.progress_horizon - t).max(0) * (w.progress_base + w.progress_per_strength * strength);
+            let k = strength as usize - 1; // Explorateur 0, Avant-garde 1, Sentinelle 2
+            let mut v = w.value[k] + (w.progress_horizon - t).max(0) * w.progress[k];
             if p.kind == Kind::Sentinel && nobody_out {
                 v += (w.sentinel_horizon - t).max(0).pow(2) * w.sentinel_sq;
             }
@@ -739,9 +799,8 @@ mod race_tests {
             start_race: 400,
             exit_race: 400,
             tempo_race: 0,
-            strength: 0,
-            progress_base: 0,
-            progress_per_strength: 0,
+            value: [0; 3],
+            progress: [0; 3],
             sentinel_sq: 0,
             ..Weights::default()
         }
@@ -830,9 +889,8 @@ mod sentinel_tests {
     /// Tous les termes à zéro, sauf ceux qu'on teste.
     fn nothing() -> Weights {
         Weights {
-            strength: 0,
-            progress_base: 0,
-            progress_per_strength: 0,
+            value: [0; 3],
+            progress: [0; 3],
             sentinel_sq: 0,
             sentinel_race: 0,
             exit_race: 0,
@@ -952,6 +1010,19 @@ mod sentinel_tests {
         let pieces = [piece(1, Kind::Explorer, 44), piece(1, Kind::Sentinel, 55), piece(1, Kind::Vanguard, 56)];
         let s = State::new(FLAT, &pieces, 1, 20, [0, 0], 0, 200);
         assert_eq!(e.evaluate(&s, 1), 90 + 60 + 30);
+    }
+
+    #[test]
+    fn weights_by_name() {
+        let mut w = Weights::default();
+        w.apply("value_e=20, progress_s=11,tempo_race=30").unwrap();
+        assert_eq!((w.value, w.progress[2], w.tempo_race), ([20, 28, 42], 11, 30));
+        assert_eq!(w.get("value_e"), Some(20));
+        assert!(w.apply("inconnu=1").is_err());
+        assert!(w.apply("value_e").is_err());
+        for name in Weights::NAMES {
+            assert!(Weights::default().get(name).is_some(), "{name}");
+        }
     }
 
     #[test]

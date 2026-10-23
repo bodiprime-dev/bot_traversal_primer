@@ -182,6 +182,11 @@ fn main() {
         cover_cap: arg(&args, "--cover-cap", Weights::default().cover_cap as u64) as i32,
         ..Weights::default()
     };
+    // Réglages par nom, appliqués en dernier : --w "value_e=20,progress_s=11".
+    let mut weights = weights;
+    if let Some(w) = args.iter().position(|a| a == "--w").and_then(|i| args.get(i + 1)) {
+        weights.apply(w).expect("--w");
+    }
     let cfg = Config {
         weights,
         beam: arg(&args, "--beam", Config::default().beam as u64) as usize,
