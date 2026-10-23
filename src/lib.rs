@@ -11,6 +11,7 @@
 
 pub mod eval;
 pub mod search;
+pub mod tempo;
 
 /// Les 200 cartes officielles (`data/boards.json`, copie de celle du SDK v0.2.0), pour les
 /// tests et les duels natifs. Inutilisée par le bot : absente du `.wasm`.
