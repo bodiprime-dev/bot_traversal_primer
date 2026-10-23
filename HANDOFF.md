@@ -86,6 +86,35 @@ contre Mont Blanc natif. Le harnais reproduit l'arène wasm (40 parties : 52,5 %
 - Corrélation, pas encore causalité : une partie de ces sorties a pu être le meilleur essai dans
   une position déjà perdue. Le test A/B du terme `exit_race` tranchera.
 
+## Étape exit_race : « ne pas sortir sans plan » (validée)
+
+Après une première sortie de Force `a`, la prochaine sortie termine la partie : le camp en
+tête gagne avec n'importe quelle sortie (ou à la limite de coups), le camp mené doit sortir
+une pièce de Force > `a` avant lui. `Eval::exit_race` note cette course (marge en demi-coups,
+incertitude `race_spread + d / race_spread_per`) à la place de l'écart de points brut.
+
+A/B apparié natif contre Mont Blanc (400 parties chacun, mêmes cartes et couleurs) :
+
+| Budget | Référence (SDK) | exit_race | Améliorées / dégradées | z |
+|---|---|---|---|---|
+| 3 000 nœuds | 47,5 % | 53,5 % | 67 / 43 | +2,29 |
+| 3 600 nœuds | 49,9 % | 55,8 % | 75 / 53 | +1,94 |
+| 4 500 nœuds | 47,6 % | 50,4 % | 76 / 63 | +1,10 |
+| cumul | | | 218 / 159 | ≈ +3,0 |
+
+Arène wasm officielle, 400 parties contre `montblanc` : **47,8 % → 53,1 %** (−16 → +22 Elo,
+± 34), 0 faute, fuel moyen 43 %. Piolet sort le premier hors Sentinelle ~16 fois sur 400 au
+lieu de ~50 ; quand Mont Blanc le fait, Piolet y marque ~75 %.
+
+`start_race` (course des Sentinelles réécrite : une sortie adverse plus faible ne sauve pas de
+la Sentinelle, deux sorties coûtent la somme des tours) est implémentée et testée mais
+**désactivée** : elle dégrade la course des Sentinelles (A+B : 50,6 % ; A seule : 50,5 %).
+Piste : le modèle est juste sur le papier, mais la valeur graduée remplace un ±150 à horizon 5
+qui marchait ; à reprendre avec un réglage (poids, horizon) plutôt que jetée.
+
+À surveiller : à 4 500 nœuds, la course des Sentinelles se dégrade aussi avec exit_race seule
+(133 / 165 contre 142 / 152).
+
 ## Prochaine étape : évaluation par poids d'actions
 
 Remplacer `Ctx::evaluate` par notre fonction, avec une structure de poids réglable, par exemple :
