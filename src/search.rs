@@ -52,6 +52,11 @@ pub struct Config {
     pub history: bool,
 }
 
+impl Pick {
+    /// Score d'un coup racine élagué par le faisceau (non évalué à la dernière itération).
+    pub const UNSEARCHED: i32 = -INF;
+}
+
 impl Default for Config {
     fn default() -> Config {
         Config { max_depth: 16, beam: 20, weights: Weights::default(), guard_root: 0, guard_tree: 0, hunt: 0, history: false }
@@ -102,6 +107,10 @@ pub struct Piolet {
     history: Vec<i32>,
     /// Coups killers, par distance à la racine.
     killers: Vec<[Option<Move>; 2]>,
+    /// Scores des coups racine à la dernière itération complète : (indice dans la liste
+    /// fournie, score du point de vue du camp au trait), du meilleur au moins bon. Les coups
+    /// élagués par le faisceau valent `-INF` (`Pick::UNSEARCHED`).
+    root_scores: Vec<(usize, i32)>,
 }
 
 fn splitmix(state: &mut u64) -> u64 {
@@ -133,6 +142,7 @@ impl Piolet {
             last_heights: None,
             history: vec![0; 2 * 100 * 100],
             killers: vec![[None; 2]; MAX_PLY],
+            root_scores: Vec::new(),
         }
     }
 
@@ -153,7 +163,14 @@ impl Piolet {
     /// Choisit un coup parmi `moves` (la liste légale fournie par l'arène).
     /// `stop` est interrogé tous les 64 nœuds ; à `true`, la recherche s'arrête et on garde
     /// la dernière itération complète.
+    /// Scores des coups racine au dernier `choose` (voir le champ `root_scores`). Vide si la
+    /// recherche n'a pas terminé une itération (ou un seul coup légal).
+    pub fn root_scores(&self) -> &[(usize, i32)] {
+        &self.root_scores
+    }
+
     pub fn choose(&mut self, state: &State, moves: &[Move], stop: fn() -> bool) -> Pick {
+        self.root_scores.clear();
         // Nouvelle partie (ou autre relief) : la table n'a plus de sens.
         let fresh = match (self.last_ply, self.last_heights) {
             (Some(p), Some(h)) => state.ply <= p || h != state.heights,
@@ -314,6 +331,7 @@ impl Search<'_> {
             let (score, (mv, idx)) = scored[0];
             best = Pick { index: idx, depth, score, nodes: self.nodes };
             best_mv = mv;
+            self.owner.root_scores = scored.iter().map(|&(sc, (_, i))| (i, sc)).collect();
             root = scored.into_iter().map(|(_, x)| x).collect();
             // Victoire forcée trouvée : inutile d'aller plus loin.
             if score >= WIN - 1000 {

@@ -85,9 +85,14 @@ class Net:
         return out, (idx, dense, a1, h1, a2, h2)
 
     def step(self, idx, dense, y, lr, l2=1e-5):
-        out, (idx, dense, a1, h1, a2, h2) = self.forward(idx, dense)
-        n = len(y)
-        g3 = ((out - y) / n)[:, None]  # dérivée de l'entropie croisée à travers la sigmoïde
+        out, cache = self.forward(idx, dense)
+        # Dérivée de l'entropie croisée à travers la sigmoïde, par rapport au logit.
+        self.backward(cache, (out - y) / len(y), lr, l2)
+
+    def backward(self, cache, dz, lr, l2=1e-5):
+        """Une mise à jour Adam, `dz` étant la dérivée de la perte par rapport au logit."""
+        idx, dense, a1, h1, a2, h2 = cache
+        g3 = dz[:, None]
         grads = {"W3": h2.T @ g3, "b3": g3.sum(0)}
         g2 = (g3 @ self.p["W3"].T) * (a2 > 0)
         grads["W2"], grads["b2"] = h1.T @ g2, g2.sum(0)
