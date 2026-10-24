@@ -11,7 +11,7 @@
 use std::cmp::Reverse;
 
 use traversal_bot::core::bot::WIN;
-use traversal_bot::core::{apply_move, Ctx, Kind, Move, MoveKind, State, Tuning};
+use traversal_bot::core::{apply_move, legal_moves, Ctx, Kind, Move, MoveKind, State, Tuning};
 
 use crate::eval::{Eval, Weights};
 
@@ -165,6 +165,26 @@ impl Piolet {
     /// la dernière itération complète.
     /// Scores des coups racine au dernier `choose` (voir le champ `root_scores`). Vide si la
     /// recherche n'a pas terminé une itération (ou un seul coup légal).
+    /// Feuille de la variante principale après `first` (le coup choisi à la racine) : on suit les
+    /// meilleurs coups de la table de transposition, au plus `max` demi-coups en tout. Renvoie la
+    /// position atteinte et le nombre de demi-coups joués depuis `state`. La racine n'est pas dans
+    /// la table, d'où `first`. Meilleur effort : une entrée écrasée interrompt la variante.
+    pub fn pv_leaf(&self, state: &State, first: &Move, max: usize) -> (State, usize) {
+        let mut s = apply_move(state, first);
+        let mut n = 1;
+        while n < max && !s.over {
+            let key = self.hash(&s);
+            let e = self.tt[(key as usize) & ((1 << TT_BITS) - 1)];
+            let Some(mv) = (e.key == key && e.depth >= 0).then_some(e.mv).flatten() else { break };
+            if !legal_moves(&s).contains(&mv) {
+                break; // collision de clé
+            }
+            s = apply_move(&s, &mv);
+            n += 1;
+        }
+        (s, n)
+    }
+
     pub fn root_scores(&self) -> &[(usize, i32)] {
         &self.root_scores
     }
