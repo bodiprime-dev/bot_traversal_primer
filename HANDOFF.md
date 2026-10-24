@@ -398,6 +398,33 @@ surapprentissage commence vers l'époque 10-15 ; arrêt au meilleur point de val
 Premier essai (sans les paires fiables, perte softmax sur tous les candidats) : le réseau
 dégradait la validation.
 
+## Vitesse en wasm (gains gratuits, résultats de recherche identiques)
+
+Mesure : journaux de l'arène (`--verbose`), fuel consommé / nœuds, 6 parties contre Mont Blanc. Le
+fuel compte des instructions : la mesure ne dépend pas de la charge de la machine (contrairement au
+temps natif).
+
+| Version | Fuel par nœud | Nœuds par coup | Profondeur moyenne |
+|---|---|---|---|
+| avant | 334 k | 3 035 | 5,20 |
+| file à seaux (Dial) dans `blocked_costs` | 211 k | 4 714 | 5,45 |
+| + recherche de calme sans trier les coups calmes | **197 k** | **5 010** | **5,49** |
+
+Les deux changements sont vérifiés par des tests d'identité (`same_as_sdk`, `tactical_matches_sdk_order`)
+et par 16 parties identiques. Natif : évaluation ≈ 3,8 µs, coups triés du SDK ≈ 4,9 µs (dont 3,8 µs
+de coups légaux) : les deux postes pèsent à peu près autant.
+
+`PIOLET_SPEND` (part du fuel dépensée, %, 50 par défaut) : le fuel non dépensé est perdu ; le
+dépassement maximal mesuré au-delà de la réserve est de 46 M (2 % du budget).
+
+## Mesure : limites découvertes
+
+- Le duel natif est déterministe : au plus 400 parties distinctes par budget de nœuds. Un échantillon
+  de 400 parties donne un IC 95 % de ± 5,5 points sur l'écart apparié (`scripts/abpool.py`). Les petits
+  effets (< 5 points) mesurés sur un seul échantillon ne sont pas tranchés.
+- `duel --open N --oseed S` : N demi-coups d'ouverture au hasard, identiques pour les deux réglages
+  comparés : des échantillons appariés indépendants, à cumuler.
+
 ## Prochaine étape : évaluation par poids d'actions
 
 Remplacer `Ctx::evaluate` par notre fonction, avec une structure de poids réglable, par exemple :
