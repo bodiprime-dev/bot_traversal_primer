@@ -1,21 +1,28 @@
 """Piolet-NN : apprendre à choisir le coup, sur des positions profondes et intéressantes.
 
-    python3 nn/rank.py <lots…> [--init poids.npz] [--epochs 20] [--save poids.npz]
+    python3 nn/rank.py <lots…> [--residual] [--epochs 20] [--save poids.npz]
 
 Données : `examples/deep.rs` (positions critiques ou difficiles, 8 coups candidats chacune, le
 premier étant le meilleur coup d'une recherche profonde). Pour chaque candidat : la position
 après le coup, vue de l'adversaire, son score profond et notre évaluation actuelle.
 
-Le réseau f évalue chaque position après coup ; pour nous, le coup j vaut s_j = −f(enfant_j).
-- Perte de classement : entropie croisée entre softmax(s) et la cible softmax(−score / T) (les
-  scores profonds, vus du camp qui joue) : un coup presque aussi bon que le meilleur n'est pas une
-  faute. Coups élagués par le faisceau : très mauvais.
-- Perte de valeur (poids --value) : f(enfant) ≈ sigmoïde(score profond / ÉCHELLE), pour que les
-  valeurs restent calibrées (la recherche compare des valeurs, pas seulement des rangs).
+Seules les comparaisons FIABLES servent. La recherche examine les coups autres que le premier avec
+une fenêtre nulle : leur « score » est une borne (« pas mieux que le meilleur »), souvent égale
+au meilleur score sans être une égalité. Le meilleur coup est exact ; un autre coup dont la borne
+est au moins `--margin` points sous lui est vraiment moins bon. Les autres comparaisons (bornes
+égales ou proches, coups élagués) ne disent rien et sont ignorées.
 
-Mesure (cartes 160+) : part des positions où chaque méthode met le meilleur coup en tête parmi
-les 8 candidats (hasard : 1/8), sur toutes les positions et sur les difficiles (là où une
-recherche de 3 000 nœuds s'était trompée).
+Perte par paires : pour chaque coup j nettement moins bon que le meilleur coup 0,
+    log(1 + exp(z_0 − z_j))      (z = logit que le camp qui joue dans l'enfant gagne)
+c'est-à-dire : l'enfant du meilleur coup doit être moins bon pour l'adversaire que celui du coup j.
+Pondération par la certitude (écart / 60, entre 0,3 et 1).
+
+--residual : z = évaluation actuelle / ÉCHELLE + réseau (le réseau apprend une correction, initialisée
+à zéro : on part exactement du niveau actuel).
+
+Mesure (cartes de test) : part des comparaisons fiables où le meilleur coup est classé au-dessus du
+coup moins bon, pour l'évaluation actuelle et le réseau, sur toutes les positions et sur les
+difficiles (là où une recherche de 3 000 nœuds s'était trompée). Hasard : 0,5.
 """
 
 import argparse
@@ -57,33 +64,33 @@ def load(paths):
             np.array(dense, np.float32), np.array(idx, np.int64))
 
 
-def child_scores(scores):
-    """Scores des coups vus du camp qui joue : −(score de l'enfant vu de l'adversaire)."""
-    s = -scores
-    s[scores == UNSEARCHED] = -5000.0  # coup élagué : très mauvais
-    return np.clip(s, -5000, 5000)
+def pairs(scores, margin):
+    """Comparaisons fiables (n, 7) : le coup j+1 est nettement moins bon que le meilleur. Poids
+    de certitude (0 si la comparaison est ignorée)."""
+    mine = np.where(scores == UNSEARCHED, np.nan, -scores)  # score vu du camp qui joue
+    gap = mine[:, :1] - mine[:, 1:]  # > 0 : le meilleur coup est devant ; NaN : coup élagué
+    ok = np.nan_to_num(gap, nan=-1.0) >= margin
+    return ok, np.where(ok, np.clip(np.nan_to_num(gap) / 60.0, 0.3, 1.0), 0.0)
 
 
-def softmax(x):
-    e = np.exp(x - x.max(1, keepdims=True))
-    return e / e.sum(1, keepdims=True)
-
-
-def top1(values):
-    """Part des positions où le candidat 0 (le meilleur coup profond) a la plus grande valeur."""
-    return float(np.mean(np.argmax(values, 1) == 0))
+def accuracy(z, ok, rows=None):
+    """Part des paires fiables où z_0 < z_j (ex æquo : 1/2). z : (n, 8), logit des enfants."""
+    if rows is not None:
+        z, ok = z[rows], ok[rows]
+    d = z[:, 1:] - z[:, :1]
+    win = (d > 1e-9) * 1.0 + (np.abs(d) <= 1e-9) * 0.5
+    return float((win * ok).sum() / max(1, ok.sum()))
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("lots", nargs="+")
-    ap.add_argument("--init", help="poids de départ (.npz, par ex. le réseau de l'étape 1)")
+    ap.add_argument("--residual", action="store_true")
     ap.add_argument("--hidden", type=int, default=32)
     ap.add_argument("--epochs", type=int, default=20)
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--l2", type=float, default=1e-3)
-    ap.add_argument("--temp", type=float, default=60.0, help="température T de la cible (points)")
-    ap.add_argument("--value", type=float, default=0.5, help="poids de la perte de valeur")
+    ap.add_argument("--margin", type=float, default=20.0, help="écart minimal (points) pour une paire fiable")
     ap.add_argument("--batch", type=int, default=128, help="positions par lot (× 8 candidats)")
     ap.add_argument("--test-from", type=int, default=160)
     ap.add_argument("--save")
@@ -95,56 +102,59 @@ def main():
     test = boards >= a.test_from
     val = ~test & (boards >= a.test_from - 20)
     train = ~test & ~val
+    ok, weight = pairs(scores, a.margin)
     print(f"{n} positions ({train.sum()} entraînement, {val.sum()} validation, {test.sum()} test), {hard.sum()} difficiles")
-
-    mine = child_scores(scores)  # (n, 8), vu du camp qui joue
-    target = softmax(mine / a.temp)
-    # f(enfant) ≈ probabilité que le camp qui joue dans l'enfant gagne ≈ σ(score de l'enfant / ÉCHELLE).
-    value_target = 1 / (1 + np.exp(-scores.clip(-5000, 5000) / SCALE))
-    searched = scores != UNSEARCHED
+    print(f"paires fiables (marge {a.margin:g}) : entraînement {ok[train].sum()}, validation {ok[val].sum()}, test {ok[test].sum()}")
 
     rng = np.random.default_rng(1)
     net = Net(a.hidden, rng)
-    if a.init:
-        init = np.load(a.init)
-        if init["W2"].shape[0] == a.hidden:
-            net.p = {key: init[key].astype(np.float32).copy() for key in net.p}
-            print(f"départ : {a.init}")
+    base = static / SCALE if a.residual else np.zeros_like(static)  # évaluation actuelle de l'enfant, en logit
+    if a.residual:
+        net.p["W3"][:] = 0  # la correction part de zéro : on démarre exactement sur l'évaluation actuelle
+        net.p["b3"][:] = 0
 
-    def values(sel):
-        """s_j = −logit(f(enfant_j)) pour les positions `sel`."""
-        flat_idx = idx[sel].reshape(-1, 12)
-        flat_dense = dense[sel].reshape(-1, DENSE)
-        out = net.predict(flat_idx, flat_dense)
-        z = np.log(np.clip(out, 1e-7, 1 - 1e-7) / np.clip(1 - out, 1e-7, 1))
-        return -z.reshape(-1, k)
+    def raw(cache):
+        return (cache[5] @ net.p["W3"] + net.p["b3"])[:, 0]  # logit du réseau seul
+
+    def logits(rows, batch=4096):
+        zs = []
+        for i in range(0, len(rows), batch):
+            b = rows[i:i + batch]
+            _, cache = net.forward(idx[b].reshape(-1, 12), dense[b].reshape(-1, DENSE))
+            zs.append(raw(cache).reshape(-1, k) + base[b])
+        return np.concatenate(zs)
 
     def report(title):
-        print(f"\n{title} (cartes {a.test_from}+ ; meilleur coup en tête parmi 8 : toutes / difficiles)")
-        for name, v in [("hasard", rng.random((test.sum(), k))), ("évaluation actuelle", -static[test]), ("réseau", values(test))]:
-            print(f"  {name:<20} {top1(v):.3f} / {top1(v[hard[test]]):.3f}")
+        rows = np.flatnonzero(test)
+        h = hard[rows]
+        print(f"\n{title} — comparaisons fiables du test : meilleur coup classé au-dessus (toutes / difficiles)")
+        z_eval = static[rows] / SCALE
+        z_net = logits(rows)
+        for name, z in [("évaluation actuelle", z_eval), ("réseau", z_net)]:
+            print(f"  {name:<20} {accuracy(z, ok[rows]):.3f} / {accuracy(z, ok[rows], h):.3f}")
 
     report("Avant entraînement")
-    best, best_p = None, None
+    best, best_p = -1.0, {key: x.copy() for key, x in net.p.items()}
     tr = np.flatnonzero(train)
+    vrows = np.flatnonzero(val)
     for epoch in range(a.epochs):
         rng.shuffle(tr)
         for i in range(0, len(tr), a.batch):
             b = tr[i:i + a.batch]
-            out, cache = net.forward(idx[b].reshape(-1, 12), dense[b].reshape(-1, DENSE))
-            out = np.clip(out, 1e-7, 1 - 1e-7)
-            z = np.log(out / (1 - out)).reshape(-1, k)
-            # Classement : s = −z ; d(CE)/ds = softmax(s) − cible ; d/dz = −(…).
-            d_rank = -(softmax(-z) - target[b]) / len(b)
-            # Valeur : entropie croisée sur les candidats évalués ; d/dz = (f − cible).
-            m = searched[b]
-            d_val = a.value * (out.reshape(-1, k) - value_target[b]) * m / max(1, m.sum())
-            net.backward(cache, (d_rank + d_val).ravel(), a.lr, a.l2)
-        v = values(val)
-        score = top1(v)
-        if best is None or score > best:
-            best, best_p = score, {key: x.copy() for key, x in net.p.items()}
-        print(f"  époque {epoch + 1:>2} : validation {score:.3f}")
+            _, cache = net.forward(idx[b].reshape(-1, 12), dense[b].reshape(-1, DENSE))
+            z = raw(cache).reshape(-1, k) + base[b]
+            w = weight[b]
+            norm = max(1.0, w.sum())
+            # perte log(1 + exp(z_0 − z_j)) ; s = σ(z_0 − z_j)
+            s = 1 / (1 + np.exp(-(z[:, :1] - z[:, 1:])))
+            dz = np.zeros_like(z)
+            dz[:, 0] = (w * s).sum(1) / norm
+            dz[:, 1:] = -w * s / norm
+            net.backward(cache, dz.ravel(), a.lr, a.l2)
+        acc = accuracy(logits(vrows), ok[vrows])
+        if acc > best:
+            best, best_p = acc, {key: x.copy() for key, x in net.p.items()}
+        print(f"  époque {epoch + 1:>2} : validation {acc:.3f}")
     net.p = best_p
     report("Après entraînement (meilleure époque en validation)")
     if a.save:
