@@ -156,6 +156,7 @@ def main():
             best, best_p = acc, {key: x.copy() for key, x in net.p.items()}
         print(f"  époque {epoch + 1:>2} : validation {acc:.3f}")
     net.p = best_p
+    print(f"\nmeilleure validation : {best:.3f}")
     report("Après entraînement (meilleure époque en validation)")
     if a.save:
         np.savez(a.save, **net.p)

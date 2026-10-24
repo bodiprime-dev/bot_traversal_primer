@@ -362,6 +362,42 @@ entraîner aussi sur des positions de feuilles.
 Infrastructure : le conteneur est recyclé environ toutes les 35 à 90 minutes ; tout calcul long
 doit être reprenable (nn/generate.sh) ou tenir dans ce délai.
 
+## Piolet-NN : apprendre à choisir le coup (positions profondes)
+
+Génération : `examples/deep.rs` (auto-jeu à 20 000 nœuds ; positions critiques ou « difficiles » :
+le coup d'une recherche de 3 000 nœuds est ≥ 30 points sous le meilleur ; 8 candidats), lots
+reprenables par `nn/generate.sh`. ~14 parties/min, ~6 positions retenues par partie.
+
+Deux pièges découverts en route :
+- **Bornes prises pour des valeurs.** Les coups racine autres que le premier sont cherchés en
+  fenêtre nulle : leur score est une borne (« pas mieux que le meilleur »), exactement égale au
+  meilleur score pour 55 % des positions. Les étiqueter comme équivalents au meilleur = du bruit.
+  `nn/rank.py` n'utilise que les comparaisons fiables : le meilleur coup (exact) contre un coup
+  dont la borne est ≥ 20 points dessous (≈ 2 par position).
+- **Égalités.** Le bon coup étant en première position, `argmax` favorisait l'évaluation (valeurs
+  entières) : « 0,465 » est en fait 0,356 une fois les ex æquo comptés au prorata.
+
+Sur ces comparaisons fiables, l'évaluation actuelle classe le meilleur coup au-dessus d'un coup
+nettement moins bon dans seulement 63 à 68 % des cas (hasard : 50 %).
+
+Réseau en correction (`rank.py --residual` : logit = évaluation / 270 + réseau, correction
+initialisée à zéro), 5 113 positions (3 679 d'entraînement), test = cartes 160+ (911 positions,
+1 619 paires) :
+
+| Réseau | Test, toutes | Test, difficiles | Validation |
+|---|---|---|---|
+| évaluation actuelle | 0,677 | 0,621 | — |
+| 32 neurones, L2 1e-3 | 0,710 | 0,644 | 0,749 |
+| 32 neurones, L2 1e-2 | 0,720 | 0,648 | 0,754 |
+| 16 neurones | 0,717 | 0,646 | 0,753 |
+| **64 neurones, L2 1e-2** (choisi sur la validation) | **0,729** | **0,659** | **0,756** |
+| 32 neurones, L2 3e-2 | 0,728 | 0,659 | 0,745 |
+
+Gain du 64 neurones : +5,3 points, IC 95 % par position +1,4 à +9,2 (`nn/bootstrap.py`). Le
+surapprentissage commence vers l'époque 10-15 ; arrêt au meilleur point de validation.
+Premier essai (sans les paires fiables, perte softmax sur tous les candidats) : le réseau
+dégradait la validation.
+
 ## Prochaine étape : évaluation par poids d'actions
 
 Remplacer `Ctx::evaluate` par notre fonction, avec une structure de poids réglable, par exemple :
