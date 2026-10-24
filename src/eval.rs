@@ -576,68 +576,74 @@ impl Eval {
     /// voisines de la case ; défense : 3 + 1 par allié voisin. Marche sur le relief seul (les pièces
     /// sur le chemin de l'attaquant sont ignorées) ; diagonales et bonds de l'Explorateur compris.
     /// `mover` : indice de la Sentinelle qui se déplace (elle ne se soutient pas elle-même).
+    #[cfg(test)]
     fn danger(&self, state: &State, mover: u8) -> u128 {
+        (0..SQUARES as u8)
+            .filter(|&s| self.threatened(state, mover, s))
+            .fold(0, |m, s| m | 1 << s)
+    }
+
+    /// La case `s` fait-elle partie de `danger` ? (calcul case par case, à la demande)
+    fn threatened(&self, state: &State, mover: u8, s: u8) -> bool {
         let tables = self.safe.as_ref().expect("safe_race");
         let owner = state.piece(mover).owner;
         let h = &state.heights;
-        let mut mask = 0u128;
-        for s in 0..SQUARES as u8 {
-            if state.at(s).is_some_and(|i| state.piece(i).owner == owner) {
-                continue; // case occupée par un allié : on ne s'y arrête pas
-            }
-            let (mut defense, mut support) = (3i32, 0i32);
-            for &nb in neighbors_of(s) {
-                if let Some(i) = state.at(nb).filter(|&i| i != mover) {
-                    let q = state.piece(i);
-                    if q.owner == owner {
-                        defense += 1;
-                    } else {
-                        support += q.kind.strength() as i32;
-                    }
-                }
-            }
-            let (sx, sy) = ((s as usize % SIZE) as i32, (s as usize / SIZE) as i32);
-            for (qi, q) in state.pieces().iter().enumerate() {
-                if q.owner == owner || state.at(s) == Some(qi as u8) {
-                    continue;
-                }
-                let k = q.kind.strength() as usize - 1;
-                let d = tables.walk[k][q.sq as usize][s as usize];
-                let special = q.kind == Kind::Explorer && {
-                    let (qx, qy) = ((q.sq as usize % SIZE) as i32, (q.sq as usize / SIZE) as i32);
-                    let (dx, dy) = ((qx - sx).abs(), (qy - sy).abs());
-                    (dx == 1 && dy == 1) || (dx + dy == 2 && (dx == 0 || dy == 0))
-                };
-                if d == u8::MAX && !special {
-                    continue;
-                }
-                let adjacent = neighbors_of(s).contains(&q.sq);
-                let height = (h[q.sq as usize] > h[s as usize]) as i32
-                    - (h[q.sq as usize] < h[s as usize]) as i32;
-                let charge = (q.kind == Kind::Vanguard && d == 4) as i32;
-                // Les voisines adverses soutiennent ; l'attaquant lui-même, s'il est voisin, ne se compte pas.
-                let attack = q.kind.strength() as i32 + height + charge + support
-                    - if adjacent {
-                        q.kind.strength() as i32
-                    } else {
-                        0
-                    };
-                if attack >= defense {
-                    mask |= 1 << s;
-                    break;
+        if state.at(s).is_some_and(|i| state.piece(i).owner == owner) {
+            return false; // case occupée par un allié : on ne s'y arrête pas
+        }
+        let (mut defense, mut support) = (3i32, 0i32);
+        for &nb in neighbors_of(s) {
+            if let Some(i) = state.at(nb).filter(|&i| i != mover) {
+                let q = state.piece(i);
+                if q.owner == owner {
+                    defense += 1;
+                } else {
+                    support += q.kind.strength() as i32;
                 }
             }
         }
-        mask
+        let (sx, sy) = ((s as usize % SIZE) as i32, (s as usize / SIZE) as i32);
+        for (qi, q) in state.pieces().iter().enumerate() {
+            if q.owner == owner || state.at(s) == Some(qi as u8) {
+                continue;
+            }
+            let k = q.kind.strength() as usize - 1;
+            let d = tables.walk[k][q.sq as usize][s as usize];
+            let special = q.kind == Kind::Explorer && {
+                let (qx, qy) = ((q.sq as usize % SIZE) as i32, (q.sq as usize / SIZE) as i32);
+                let (dx, dy) = ((qx - sx).abs(), (qy - sy).abs());
+                (dx == 1 && dy == 1) || (dx + dy == 2 && (dx == 0 || dy == 0))
+            };
+            if d == u8::MAX && !special {
+                continue;
+            }
+            let adjacent = neighbors_of(s).contains(&q.sq);
+            let height = (h[q.sq as usize] > h[s as usize]) as i32
+                - (h[q.sq as usize] < h[s as usize]) as i32;
+            let charge = (q.kind == Kind::Vanguard && d == 4) as i32;
+            // Les voisines adverses soutiennent ; l'attaquant lui-même, s'il est voisin, ne se compte pas.
+            let own = if adjacent {
+                q.kind.strength() as i32
+            } else {
+                0
+            };
+            if q.kind.strength() as i32 + height + charge + support - own >= defense {
+                return true;
+            }
+        }
+        false
     }
 
-    /// Tours pour qu'une Sentinelle sorte en ne s'arrêtant que sur des cases sûres (`danger` :
-    /// cases à éviter). Relief seul pour la marche ; on ne s'arrête ni sur un allié ni sur une
-    /// Sentinelle adverse (une autre pièce adverse peut être prise). 15 : pas de chemin sûr.
-    fn safe_turns(&self, state: &State, p: &Piece, danger: u128) -> i32 {
+    /// Tours pour que la Sentinelle `mover` sorte en ne s'arrêtant que sur des cases sûres (hors
+    /// `danger`). Relief seul pour la marche ; on ne s'arrête ni sur un allié ni sur une Sentinelle
+    /// adverse (une autre pièce adverse peut être prise). Recherche en largeur par tours sur des
+    /// champs de bits, arrêtée à `limit` (renvoyé s'il n'y a pas de chemin sûr plus court) ; le
+    /// danger n'est calculé que pour les cases atteintes.
+    fn safe_turns(&self, state: &State, mover: u8, limit: i32) -> i32 {
         let tables = self.safe.as_ref().expect("safe_race");
+        let p = state.piece(mover);
         let exit = tables.exit[p.owner as usize - 1];
-        let mut blocked = danger;
+        let mut blocked = 0u128;
         for q in state.pieces() {
             if q.owner == p.owner || q.kind == Kind::Sentinel {
                 blocked |= 1 << q.sq;
@@ -645,7 +651,7 @@ impl Eval {
         }
         let mut frontier = 1u128 << p.sq;
         let mut seen = frontier;
-        for t in 1..15 {
+        for t in 1..limit {
             if frontier & exit != 0 {
                 return t;
             }
@@ -657,13 +663,21 @@ impl Eval {
                 next |= tables.turn[s];
             }
             next &= !seen & !blocked;
-            if next == 0 {
-                return 15;
-            }
             seen |= next;
+            let mut f = next;
+            while f != 0 {
+                let s = f.trailing_zeros() as u8;
+                f &= f - 1;
+                if self.threatened(state, mover, s) {
+                    next &= !(1 << s);
+                }
+            }
+            if next == 0 {
+                return limit;
+            }
             frontier = next;
         }
-        15
+        limit
     }
 
     /// Défense d'une pièce (R7.4) : sa Force + 1 par allié voisin.
@@ -850,8 +864,8 @@ impl Eval {
             // Une Sentinelle ne compte que ses tours SÛRS (jamais moins que sa distance brute).
             for (i, p) in state.pieces().iter().enumerate() {
                 if p.kind == Kind::Sentinel {
-                    let safe = self.safe_turns(state, p, self.danger(state, i as u8));
-                    turns[i] = turns[i].max(safe.min(turns[i] + self.w.safe_race));
+                    turns[i] =
+                        turns[i].max(self.safe_turns(state, i as u8, turns[i] + self.w.safe_race));
                 }
             }
         }
@@ -1372,7 +1386,7 @@ mod sentinel_tests {
         );
         let raw = exact_turns(&FLAT, 1, Kind::Sentinel);
         let alone = State::new(FLAT, &[piece(1, Kind::Sentinel, 44)], 1, 20, [0, 0], 0, 200);
-        let base = e.safe_turns(&alone, &alone.pieces()[0], e.danger(&alone, 0));
+        let base = e.safe_turns(&alone, 0, 15);
         assert_eq!(base, raw[44] as i32);
         let longer = (0..SQUARES as u8).filter(|&v| v != 44).any(|v| {
             let s = State::new(
@@ -1384,7 +1398,7 @@ mod sentinel_tests {
                 0,
                 200,
             );
-            e.safe_turns(&s, &s.pieces()[0], e.danger(&s, 0)) > base
+            e.safe_turns(&s, 0, 15) > base
         });
         assert!(longer);
     }

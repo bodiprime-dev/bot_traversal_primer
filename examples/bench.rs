@@ -58,6 +58,21 @@ fn main() {
     time("évaluation (evaluate)", &|s| {
         evals[idx(s)].0.evaluate(s, s.to_move) as u64
     });
+    let safe: Vec<Eval> = states
+        .iter()
+        .map(|s| {
+            Eval::new(
+                &s.heights,
+                Weights {
+                    safe_race: 1,
+                    ..Weights::default()
+                },
+            )
+        })
+        .collect();
+    time("évaluation + distance sûre (safe_race)", &|s| {
+        safe[idx(s)].evaluate(s, s.to_move) as u64
+    });
     time("coups légaux (legal_moves)", &|s| {
         legal_moves(s).len() as u64
     });
