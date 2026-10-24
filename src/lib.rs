@@ -36,10 +36,26 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use search::{Config, Piolet};
 use traversal_bot::{bot, fuel_left, log, Turn};
 
-/// Part du fuel de chaque coup qu'on s'autorise à dépenser (le reste est une marge : un coup
-/// qui épuise le fuel fait perdre la partie).
-const SPEND_NUM: u64 = 1;
-const SPEND_DEN: u64 = 2;
+/// Part du fuel de chaque coup qu'on s'autorise à dépenser, en pourcentage (le reste est une
+/// marge : un coup qui épuise le fuel fait perdre la partie). Le fuel non dépensé est perdu (il
+/// est remis à neuf à chaque coup). Réglable à la compilation : `PIOLET_SPEND=80`.
+const SPEND_PERCENT: u64 = match option_env!("PIOLET_SPEND") {
+    Some(s) => parse_percent(s),
+    None => 50,
+};
+
+const fn parse_percent(s: &str) -> u64 {
+    let b = s.as_bytes();
+    let mut i = 0;
+    let mut v = 0u64;
+    while i < b.len() {
+        assert!(b[i].is_ascii_digit(), "PIOLET_SPEND : un entier attendu");
+        v = v * 10 + (b[i] - b'0') as u64;
+        i += 1;
+    }
+    assert!(v >= 10 && v <= 95, "PIOLET_SPEND : entre 10 et 95");
+    v
+}
 
 /// Fuel en deçà duquel on arrête de chercher (fixé à chaque coup).
 static RESERVE: AtomicU64 = AtomicU64::new(0);
@@ -64,7 +80,7 @@ fn config() -> Config {
 }
 
 fn choose(turn: &Turn) -> usize {
-    RESERVE.store(turn.fuel - turn.fuel * SPEND_NUM / SPEND_DEN, Ordering::Relaxed);
+    RESERVE.store(turn.fuel - turn.fuel / 100 * SPEND_PERCENT, Ordering::Relaxed);
     let pick = BOT.with(|b| {
         let mut b = b.borrow_mut();
         let bot = b.get_or_insert_with(|| Piolet::new(config()));
