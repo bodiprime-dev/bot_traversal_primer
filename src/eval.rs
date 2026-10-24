@@ -94,6 +94,13 @@ pub struct Weights {
     /// Force de nos autres pièces voisines de la case. Une puissance de 3 reprend même une
     /// Sentinelle seule.
     pub cover_cap: i32,
+    /// Piolet-NN : si non nul, l'évaluation (hors fin de partie) est celle du réseau
+    /// (`nn::net`) : `nn × logit(probabilité de gagner)`. ~270 : l'échelle de l'évaluation
+    /// actuelle (pente de sa régression logistique sur les données).
+    pub nn: i32,
+    /// Avec le réseau : ajouter `exit_race` après une première sortie (une règle, pas une
+    /// appréciation). 0 / 1.
+    pub nn_race: i32,
 }
 
 impl Default for Weights {
@@ -108,7 +115,7 @@ impl Default for Weights {
 
 impl Weights {
     /// Noms des poids réglables par `set` / `get` (réglage automatique, options du duel).
-    pub const NAMES: [&'static str; 16] = [
+    pub const NAMES: [&'static str; 18] = [
         "value_e",
         "value_v",
         "value_s",
@@ -125,6 +132,8 @@ impl Weights {
         "tempo_cap",
         "cover",
         "cover_cap",
+        "nn",
+        "nn_race",
     ];
 
     fn slot(&mut self, name: &str) -> Option<&mut i32> {
@@ -145,6 +154,8 @@ impl Weights {
             "tempo_cap" => &mut self.tempo_cap,
             "cover" => &mut self.cover,
             "cover_cap" => &mut self.cover_cap,
+            "nn" => &mut self.nn,
+            "nn_race" => &mut self.nn_race,
             _ => return None,
         })
     }
@@ -197,6 +208,8 @@ impl Weights {
             tempo_cap: 6,
             cover: 0,
             cover_cap: 0,
+            nn: 0,
+            nn_race: 0,
         }
     }
 }
@@ -518,6 +531,9 @@ impl Eval {
                 Some(_) => -WIN + state.ply as i32,
             };
         }
+        if self.w.nn != 0 {
+            return self.evaluate_nn(state, side);
+        }
         let w = &self.w;
         let nobody_out = state.finished == 0;
         let other = if side == 1 { 2 } else { 1 };
@@ -641,6 +657,27 @@ impl Eval {
             total += self.sentinel_race(state, side, &first, &sentinel);
         }
         total
+    }
+
+    /// Évaluation par le réseau (voir `Weights::nn`), du point de vue de `side`.
+    fn evaluate_nn(&self, state: &State, side: u8) -> i32 {
+        let (sparse, dense) = crate::nn::features(self, state);
+        let logit = crate::nn::net().logit(&sparse, &dense).clamp(-30.0, 30.0);
+        let mut v = (logit * self.w.nn as f32) as i32; // camp au trait
+        if self.w.nn_race != 0 && state.finished > 0 && self.w.exit_race != 0 {
+            let turns = self.piece_turns(state);
+            let mut fastest = [[i32::MAX; 4]; 2];
+            for (i, p) in state.pieces().iter().enumerate() {
+                let f = &mut fastest[p.owner as usize - 1][p.kind.strength() as usize];
+                *f = (*f).min(turns[i]);
+            }
+            v += self.exit_race(state, state.to_move, &fastest);
+        }
+        if side == state.to_move {
+            v
+        } else {
+            -v
+        }
     }
 
     /// Demi-coups avant que `owner` puisse jouer le `turns`-ième coup d'une pièce : le camp
@@ -1022,6 +1059,19 @@ mod sentinel_tests {
         assert!(w.apply("value_e").is_err());
         for name in Weights::NAMES {
             assert!(Weights::default().get(name).is_some(), "{name}");
+        }
+    }
+
+    #[test]
+    fn nn_evaluation_is_antisymmetric() {
+        let heights = crate::boards()[5];
+        let e = Eval::new(&heights, Weights { nn: 270, ..Weights::default() });
+        let mut s = traversal_bot::core::new_game(heights);
+        for _ in 0..12 {
+            let v = e.evaluate(&s, s.to_move);
+            assert_eq!(e.evaluate(&s, 3 - s.to_move), -v);
+            assert!(v.abs() < 30 * 270 + 1);
+            s = traversal_bot::core::apply_move(&s, &traversal_bot::core::legal_moves(&s)[0]);
         }
     }
 

@@ -125,3 +125,125 @@ mod tests {
         }
     }
 }
+
+/// Réseau entraîné par `nn/train.py`, exporté par `nn/export.py` (format `PNN1`).
+pub struct Net {
+    h1: usize,
+    h2: usize,
+    w1: Vec<f32>,
+    wd: Vec<f32>,
+    b1: Vec<f32>,
+    w2: Vec<f32>,
+    b2: Vec<f32>,
+    w3: Vec<f32>,
+    b3: f32,
+}
+
+/// Tailles maximales des couches cachées (activations sur la pile, sans allocation).
+const MAX_H1: usize = 256;
+const MAX_H2: usize = 64;
+
+impl Net {
+    pub fn from_bytes(b: &[u8]) -> Result<Net, String> {
+        if b.len() < 20 || &b[..4] != b"PNN1" {
+            return Err("format inconnu (PNN1 attendu)".into());
+        }
+        let u = |i: usize| u32::from_le_bytes(b[4 + 4 * i..8 + 4 * i].try_into().unwrap()) as usize;
+        let (sparse, dense, h1, h2) = (u(0), u(1), u(2), u(3));
+        if sparse != SPARSE || dense != DENSE || h1 > MAX_H1 || h2 > MAX_H2 {
+            return Err(format!("tailles {sparse}+{dense} -> {h1} -> {h2} incompatibles"));
+        }
+        let mut floats = b[20..].chunks_exact(4).map(|c| f32::from_le_bytes(c.try_into().unwrap()));
+        let mut take = |n: usize| -> Result<Vec<f32>, String> {
+            let v: Vec<f32> = floats.by_ref().take(n).collect();
+            if v.len() == n {
+                Ok(v)
+            } else {
+                Err("fichier tronqué".into())
+            }
+        };
+        Ok(Net {
+            h1,
+            h2,
+            w1: take((SPARSE + 1) * h1)?,
+            wd: take(DENSE * h1)?,
+            b1: take(h1)?,
+            w2: take(h1 * h2)?,
+            b2: take(h2)?,
+            w3: take(h2)?,
+            b3: take(1)?[0],
+        })
+    }
+
+    /// Logit de la probabilité que le camp au trait gagne.
+    pub fn logit(&self, sparse: &[u16], dense: &[f32; DENSE]) -> f32 {
+        let (h1, h2) = (self.h1, self.h2);
+        let mut a1 = [0f32; MAX_H1];
+        a1[..h1].copy_from_slice(&self.b1);
+        for &i in sparse {
+            let row = &self.w1[i as usize * h1..(i as usize + 1) * h1];
+            for (a, w) in a1[..h1].iter_mut().zip(row) {
+                *a += w;
+            }
+        }
+        for (d, &x) in dense.iter().enumerate() {
+            if x != 0.0 {
+                let row = &self.wd[d * h1..(d + 1) * h1];
+                for (a, w) in a1[..h1].iter_mut().zip(row) {
+                    *a += x * w;
+                }
+            }
+        }
+        let mut a2 = [0f32; MAX_H2];
+        a2[..h2].copy_from_slice(&self.b2);
+        for (h, &a) in a1[..h1].iter().enumerate() {
+            if a > 0.0 {
+                let row = &self.w2[h * h2..(h + 1) * h2];
+                for (b, w) in a2[..h2].iter_mut().zip(row) {
+                    *b += a * w;
+                }
+            }
+        }
+        self.b3 + a2[..h2].iter().zip(&self.w3).map(|(&a, w)| a.max(0.0) * w).sum::<f32>()
+    }
+}
+
+/// Le réseau du bot : `nn/weights.bin`, intégré à la compilation. En natif, la variable
+/// d'environnement `PIOLET_NN` (chemin d'un autre fichier) le remplace, pour comparer des
+/// réseaux sans recompiler.
+pub fn net() -> &'static Net {
+    static NET: std::sync::OnceLock<Net> = std::sync::OnceLock::new();
+    NET.get_or_init(|| {
+        let bytes = match std::env::var("PIOLET_NN") {
+            Ok(path) => std::fs::read(&path).unwrap_or_else(|e| panic!("PIOLET_NN={path} : {e}")),
+            Err(_) => include_bytes!("../nn/weights.bin").to_vec(),
+        };
+        Net::from_bytes(&bytes).expect("réseau")
+    })
+}
+
+#[cfg(test)]
+mod net_tests {
+    use super::*;
+
+    /// L'inférence du bot redonne les prédictions de numpy (nn/check.csv, écrit par export.py).
+    #[test]
+    fn matches_numpy() {
+        let net = Net::from_bytes(include_bytes!("../nn/weights.bin")).unwrap();
+        for line in include_str!("../nn/check.csv").lines() {
+            let f: Vec<&str> = line.split(';').collect();
+            let dense: Vec<f32> = f[0].split(',').map(|v| v.parse().unwrap()).collect();
+            let sparse: Vec<u16> = f[1].split(',').map(|v| v.parse().unwrap()).collect();
+            let expected: f32 = f[2].parse().unwrap();
+            let got = net.logit(&sparse, &dense.try_into().unwrap());
+            assert!((got - expected).abs() < 1e-3, "{got} au lieu de {expected}");
+        }
+    }
+
+    #[test]
+    fn rejects_bad_files() {
+        assert!(Net::from_bytes(b"XXXX").is_err());
+        let b = include_bytes!("../nn/weights.bin");
+        assert!(Net::from_bytes(&b[..b.len() - 4]).is_err());
+    }
+}

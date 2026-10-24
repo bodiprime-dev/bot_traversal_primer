@@ -2,6 +2,7 @@
 //!
 //! ```text
 //! cargo run --release --example dataset -- --games 3000 --nodes 3000 > data.csv
+//! cargo run --release --example dataset -- --first 3000 --games 250 > lot.csv   # lot suivant
 //! ```
 //!
 //! Piolet (réglages par défaut) contre lui-même ; les `--random` premiers demi-coups sont joués
@@ -84,6 +85,8 @@ fn arg(args: &[String], name: &str, default: u64) -> u64 {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let games = arg(&args, "--games", 3000) as usize;
+    // Première partie : les lots successifs prolongent la même numérotation (cartes, hasard).
+    let first = arg(&args, "--first", 0) as usize;
     let nodes = arg(&args, "--nodes", 3000);
     let random = arg(&args, "--random", 4) as u16;
     let seed0 = arg(&args, "--seed", 1);
@@ -94,8 +97,8 @@ fn main() {
     std::thread::scope(|scope| {
         for _ in 0..threads {
             scope.spawn(|| loop {
-                let g = next_game.fetch_add(1, Ordering::Relaxed);
-                if g >= games {
+                let g = first + next_game.fetch_add(1, Ordering::Relaxed);
+                if g >= first + games {
                     break;
                 }
                 let rows = play(g % boards.len(), boards[g % boards.len()], nodes, random, seed0.wrapping_mul(1_000_003) + g as u64);
