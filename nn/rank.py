@@ -20,6 +20,15 @@ Pondération par la certitude (écart / 60, entre 0,3 et 1).
 --residual : z = évaluation actuelle / ÉCHELLE + réseau (le réseau apprend une correction, initialisée
 à zéro : on part exactement du niveau actuel).
 
+Ancrage (--value, --shrink) — indispensable. La perte par paires ne contraint que les DIFFÉRENCES entre
+coups frères : le réseau peut ajouter n'importe quel décalage commun aux 8 enfants d'une position sans
+pénalité, et la perte logistique récompense des marges sans limite. Sans ancrage, la correction avait un
+écart-type de 416 points (l'évaluation elle-même : 188) et dégradait le jeu (76 % -> 54 % contre Mont
+Blanc), la recherche comparant des valeurs absolues entre sous-arbres. On ajoute donc :
+- un ancrage de valeur : correction du meilleur coup (score exact) ≈ (score profond − évaluation) / ÉCHELLE,
+  borné à ± --value-clip ;
+- un rappel vers zéro de toutes les corrections (--shrink).
+
 Mesure (cartes de test) : part des comparaisons fiables où le meilleur coup est classé au-dessus du
 coup moins bon, pour l'évaluation actuelle et le réseau, sur toutes les positions et sur les
 difficiles (là où une recherche de 3 000 nœuds s'était trompée). Hasard : 0,5.
@@ -90,6 +99,10 @@ def main():
     ap.add_argument("--epochs", type=int, default=20)
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--l2", type=float, default=1e-3)
+    ap.add_argument("--value", type=float, default=1.0,
+                    help="ancrage de valeur : correction du meilleur coup (score exact) ≈ (score profond − évaluation) / ÉCHELLE")
+    ap.add_argument("--value-clip", type=float, default=1.0, help="borne (logit) de la cible d'ancrage")
+    ap.add_argument("--shrink", type=float, default=0.1, help="rappel vers zéro de toutes les corrections")
     ap.add_argument("--margin", type=float, default=20.0, help="écart minimal (points) pour une paire fiable")
     ap.add_argument("--batch", type=int, default=128, help="positions par lot (× 8 candidats)")
     ap.add_argument("--test-from", type=int, default=160)
@@ -124,6 +137,9 @@ def main():
             zs.append(raw(cache).reshape(-1, k) + base[b])
         return np.concatenate(zs)
 
+    # Cible d'ancrage : le meilleur coup a un score exact (vu du camp qui joue dans l'enfant).
+    anchor = np.clip((scores[:, 0] - static[:, 0]) / SCALE, -a.value_clip, a.value_clip)
+
     def report(title):
         rows = np.flatnonzero(test)
         h = hard[rows]
@@ -132,6 +148,10 @@ def main():
         z_net = logits(rows)
         for name, z in [("évaluation actuelle", z_eval), ("réseau", z_net)]:
             print(f"  {name:<20} {accuracy(z, ok[rows]):.3f} / {accuracy(z, ok[rows], h):.3f}")
+        corr = (z_net - z_eval) * SCALE  # correction en points
+        off = corr.mean(1)
+        print(f"  correction (points) : écart-type {corr.std():.0f}, décalage commun par position {off.std():.0f}, |p95| {np.percentile(np.abs(corr), 95):.0f}"
+              f"   [évaluation de l'enfant : écart-type {static[rows].std():.0f}]")
 
     report("Avant entraînement")
     best, best_p = -1.0, {key: x.copy() for key, x in net.p.items()}
@@ -150,6 +170,9 @@ def main():
             dz = np.zeros_like(z)
             dz[:, 0] = (w * s).sum(1) / norm
             dz[:, 1:] = -w * s / norm
+            r = z - base[b]  # correction du réseau seule
+            dz[:, 0] += 2 * a.value * (r[:, 0] - anchor[b]) / len(b)  # ancrage de valeur (meilleur coup)
+            dz += 2 * a.shrink * r / r.size  # rappel vers zéro
             net.backward(cache, dz.ravel(), a.lr, a.l2)
         acc = accuracy(logits(vrows), ok[vrows])
         if acc > best:
