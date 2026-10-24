@@ -936,3 +936,18 @@ impl Search<'_> {
     }
 }
 ```
+
+## Distance sûre (`safe_race`) — protocole fixé AVANT les résultats (2026-10-24, 21:30 UTC)
+
+Écrit et poussé avant d'avoir vu le moindre chiffre, pour qu'on ne puisse pas choisir la mesure après coup.
+
+1. **Mesure principale** : `duel` à 5 000 nœuds, `--open 6`, graines 1 à 4, 400 parties chacune, appariées
+   avec la référence `b20_s{1..4}` (même binaire, `safe_race=0`). Cumul par `scripts/abpool.py`.
+2. **Deux variantes, toutes deux rapportées** : `safe_race=1` et `safe_race=2`. Aucune graine n'est écartée,
+   aucune variante n'est ajoutée en cours de route sans être annoncée comme nouvelle hypothèse.
+3. **Seuil** : deux variantes testées → retenue seulement si z ≥ 2,24 (Bonferroni, 5 % bilatéral).
+4. **Confirmation sur données neuves** : la variante retenue rejoue sur les graines 5 à 8 (jamais vues).
+   Elle doit y être positive avec z ≥ 1,64 seule. Sinon : non adoptée.
+5. **Coût réel** : à nœuds égaux, le surcoût de l'évaluation est invisible. Dernière étape : duel wasm à
+   fuel égal (budget de l'arène). Adoption seulement si elle reste positive là aussi.
+6. **Mesure secondaire** (explicative, ne décide rien) : part des courses de Sentinelles gagnées.
