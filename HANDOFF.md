@@ -447,6 +447,25 @@ test (erreur 0,069 contre 0,080) ; correction prédite : écart-type 37 points (
 Distillation aux racines (80 000 positions) : 36,7 % expliqués, mais perte au jeu (76,0 → 67,6 %
 à pleine échelle, 73,1 % à demi-échelle) : les racines ne ressemblent pas aux feuilles.
 
+## Mesure robuste (1 600 parties appariées, 4 graines d'ouverture, 5 000 nœuds)
+
+`duel --open 6 --oseed 1..4`, 400 parties par graine, cumul `scripts/abpool.py` :
+
+| Contre la version actuelle (faisceau 20 : 76,2 %) | écart | IC 95 % | z |
+|---|---|---|---|
+| faisceau 24 | +0,6 | ± 2,7 | +0,45 |
+| faisceau 28 | −0,4 | ± 2,7 | −0,30 |
+| réseau des feuilles, nn_resid 270 | **−5,8** | ± 2,8 | **−4,1** |
+| réseau des feuilles, nn_resid 135 | **−2,8** | ± 2,7 | **−2,0** |
+
+- Faisceau : plateau entre 20 et 28 ; on garde 20.
+- **Piolet-NN (correction d'évaluation par un petit réseau) : abandonné.** Toutes les variantes perdent
+  (remplacement 52 %, paires sans ancrage 54 %, paires ancrées 66,5 %, distillation aux racines 67,6 /
+  73,1 %, feuilles −5,8 / −2,8 points), avec une relation dose-effet nette : plus la correction pèse,
+  plus on perd. Le réseau n'explique que 14 % de ce que la recherche profonde ajoute aux feuilles ; le
+  reste de sa correction agit comme du bruit. Pistes si l'on y revient : entrées bien plus riches,
+  apprentissage par renforcement en auto-jeu à grande échelle (machine dédiée).
+
 ## Prochaine étape : évaluation par poids d'actions
 
 Remplacer `Ctx::evaluate` par notre fonction, avec une structure de poids réglable, par exemple :
