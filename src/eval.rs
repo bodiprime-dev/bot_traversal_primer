@@ -101,6 +101,11 @@ pub struct Weights {
     /// Avec le réseau : ajouter `exit_race` après une première sortie (une règle, pas une
     /// appréciation). 0 / 1.
     pub nn_race: i32,
+    /// Piolet-NN en correction : si non nul, l'évaluation vaut l'évaluation habituelle plus
+    /// `nn_resid × sortie du réseau` (en logit), le réseau étant entraîné par `nn/rank.py
+    /// --residual` à corriger l'évaluation actuelle là où une recherche profonde la contredit.
+    /// 270 : l'échelle de l'entraînement (points par unité de logit).
+    pub nn_resid: i32,
 }
 
 impl Default for Weights {
@@ -115,7 +120,7 @@ impl Default for Weights {
 
 impl Weights {
     /// Noms des poids réglables par `set` / `get` (réglage automatique, options du duel).
-    pub const NAMES: [&'static str; 18] = [
+    pub const NAMES: [&'static str; 19] = [
         "value_e",
         "value_v",
         "value_s",
@@ -134,6 +139,7 @@ impl Weights {
         "cover_cap",
         "nn",
         "nn_race",
+        "nn_resid",
     ];
 
     fn slot(&mut self, name: &str) -> Option<&mut i32> {
@@ -156,6 +162,7 @@ impl Weights {
             "cover_cap" => &mut self.cover_cap,
             "nn" => &mut self.nn,
             "nn_race" => &mut self.nn_race,
+            "nn_resid" => &mut self.nn_resid,
             _ => return None,
         })
     }
@@ -210,6 +217,7 @@ impl Weights {
             cover_cap: 0,
             nn: 0,
             nn_race: 0,
+            nn_resid: 0,
         }
     }
 }
@@ -534,6 +542,20 @@ impl Eval {
         if self.w.nn != 0 {
             return self.evaluate_nn(state, side);
         }
+        if self.w.nn_resid != 0 {
+            // Évaluation habituelle + correction du réseau, toutes deux du point de vue du camp au
+            // trait (comme à l'entraînement), puis retournée pour l'autre camp.
+            let mover = state.to_move;
+            let (sparse, dense) = crate::nn::features(self, state);
+            let correction = crate::nn::net().logit(&sparse, &dense).clamp(-30.0, 30.0) * self.w.nn_resid as f32;
+            let v = self.evaluate_base(state, mover) + correction as i32;
+            return if side == mover { v } else { -v };
+        }
+        self.evaluate_base(state, side)
+    }
+
+    /// Évaluation par termes (hors réseau), du point de vue de `side`.
+    fn evaluate_base(&self, state: &State, side: u8) -> i32 {
         let w = &self.w;
         let nobody_out = state.finished == 0;
         let other = if side == 1 { 2 } else { 1 };
@@ -1071,6 +1093,21 @@ mod sentinel_tests {
             let v = e.evaluate(&s, s.to_move);
             assert_eq!(e.evaluate(&s, 3 - s.to_move), -v);
             assert!(v.abs() < 30 * 270 + 1);
+            s = traversal_bot::core::apply_move(&s, &traversal_bot::core::legal_moves(&s)[0]);
+        }
+    }
+
+    #[test]
+    fn nn_correction_is_antisymmetric_and_bounded() {
+        let heights = crate::boards()[5];
+        let e = Eval::new(&heights, Weights { nn_resid: 270, ..Weights::default() });
+        let base = Eval::new(&heights, Weights::default());
+        let mut s = traversal_bot::core::new_game(heights);
+        for _ in 0..12 {
+            let v = e.evaluate(&s, s.to_move);
+            assert_eq!(e.evaluate(&s, 3 - s.to_move), -v);
+            // La correction reste petite devant l'évaluation (réseau de l'étape 1 : logit < 5).
+            assert!((v - base.evaluate(&s, s.to_move)).abs() <= 30 * 270);
             s = traversal_bot::core::apply_move(&s, &traversal_bot::core::legal_moves(&s)[0]);
         }
     }
