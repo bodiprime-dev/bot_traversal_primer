@@ -59,7 +59,15 @@ impl Pick {
 
 impl Default for Config {
     fn default() -> Config {
-        Config { max_depth: 16, beam: 20, weights: Weights::default(), guard_root: 0, guard_tree: 0, hunt: 0, history: false }
+        Config {
+            max_depth: 16,
+            beam: 20,
+            weights: Weights::default(),
+            guard_root: 0,
+            guard_tree: 0,
+            hunt: 0,
+            history: false,
+        }
     }
 }
 
@@ -81,7 +89,13 @@ struct Entry {
     flag: Flag,
 }
 
-const EMPTY: Entry = Entry { key: 0, score: 0, mv: None, depth: -1, flag: Flag::Exact };
+const EMPTY: Entry = Entry {
+    key: 0,
+    score: 0,
+    mv: None,
+    depth: -1,
+    flag: Flag::Exact,
+};
 
 /// Résultat d'un choix : le coup, et de quoi alimenter un message de diagnostic.
 #[derive(Clone, Copy, Debug)]
@@ -175,7 +189,9 @@ impl Piolet {
         while n < max && !s.over {
             let key = self.hash(&s);
             let e = self.tt[(key as usize) & ((1 << TT_BITS) - 1)];
-            let Some(mv) = (e.key == key && e.depth >= 0).then_some(e.mv).flatten() else { break };
+            let Some(mv) = (e.key == key && e.depth >= 0).then_some(e.mv).flatten() else {
+                break;
+            };
             if !legal_moves(&s).contains(&mv) {
                 break; // collision de clé
             }
@@ -206,13 +222,25 @@ impl Piolet {
         self.last_ply = Some(state.ply);
         self.last_heights = Some(state.heights);
 
-        let none = Pick { index: 0, depth: 0, score: 0, nodes: 0 };
+        let none = Pick {
+            index: 0,
+            depth: 0,
+            score: 0,
+            nodes: 0,
+        };
         if moves.len() <= 1 {
             return none;
         }
         let ctx = Ctx::with_insight(&state.heights, 3, Tuning::default());
         let eval = Eval::new(&state.heights, self.cfg.weights);
-        let mut s = Search { owner: self, ctx: &ctx, eval: &eval, stop, nodes: 0, root_ply: state.ply };
+        let mut s = Search {
+            owner: self,
+            ctx: &ctx,
+            eval: &eval,
+            stop,
+            nodes: 0,
+            root_ply: state.ply,
+        };
         s.root(state, moves)
     }
 }
@@ -257,7 +285,9 @@ impl Search<'_> {
 
     /// Indice d'un coup calme dans l'historique.
     fn history_idx(state: &State, m: &Move) -> usize {
-        (state.to_move as usize - 1) * 10_000 + state.piece(m.piece).sq as usize * 100 + m.to as usize
+        (state.to_move as usize - 1) * 10_000
+            + state.piece(m.piece).sq as usize * 100
+            + m.to as usize
     }
 
     /// Distance à la racine (bornée pour indexer les killers).
@@ -268,7 +298,10 @@ impl Search<'_> {
     /// Trie les coups calmes (après sorties et captures, déjà en tête) par killers puis
     /// historique ; tri stable : l'avancée (ordre du SDK) départage.
     fn order_quiet(&self, state: &State, moves: &mut [Move]) {
-        let k = moves.iter().position(|m| matches!(m.kind, MoveKind::Move | MoveKind::Pass)).unwrap_or(moves.len());
+        let k = moves
+            .iter()
+            .position(|m| matches!(m.kind, MoveKind::Move | MoveKind::Pass))
+            .unwrap_or(moves.len());
         let killers = self.owner.killers[self.ply(state)];
         moves[k..].sort_by_key(|m| {
             if m.kind != MoveKind::Move {
@@ -300,12 +333,19 @@ impl Search<'_> {
                 (m, i)
             })
             .collect();
-        let mut best = Pick { index: root[0].1, depth: 0, score: 0, nodes: 0 };
+        let mut best = Pick {
+            index: root[0].1,
+            depth: 0,
+            score: 0,
+            nodes: 0,
+        };
         let mut best_mv = root[0].0;
         let beam = self.owner.cfg.beam;
         // Parades hors faisceau qui restent examinées à toutes les itérations.
         let guards: Vec<Move> = if self.owner.cfg.guard_root > 0 {
-            let squares = self.eval.guard_squares(state, if state.to_move == 1 { 2 } else { 1 });
+            let squares = self
+                .eval
+                .guard_squares(state, if state.to_move == 1 { 2 } else { 1 });
             root.iter()
                 .skip(beam + 6)
                 .map(|&(m, _)| m)
@@ -332,7 +372,13 @@ impl Search<'_> {
             let mut alpha = -INF;
             for (n, &(m, idx)) in root.iter().enumerate() {
                 // Au-delà du faisceau, un coup calme n'est essayé qu'aux premières itérations.
-                if n >= beam && depth > 2 && m.kind == MoveKind::Move && n >= beam + 6 && !guards.contains(&m) && !hunts.contains(&m) {
+                if n >= beam
+                    && depth > 2
+                    && m.kind == MoveKind::Move
+                    && n >= beam + 6
+                    && !guards.contains(&m)
+                    && !hunts.contains(&m)
+                {
                     scored.push((-INF, (m, idx)));
                     continue;
                 }
@@ -358,7 +404,12 @@ impl Search<'_> {
                         // précédente (qui est toujours essayé en premier).
                         if let Some(&(sc, (mv, i))) = scored.iter().max_by_key(|(sc, _)| *sc) {
                             if n > 0 && mv != best_mv && sc > best.score {
-                                best = Pick { index: i, depth: depth - 1, score: sc, nodes: self.nodes };
+                                best = Pick {
+                                    index: i,
+                                    depth: depth - 1,
+                                    score: sc,
+                                    nodes: self.nodes,
+                                };
                             }
                         }
                         break 'deepen;
@@ -368,7 +419,12 @@ impl Search<'_> {
             // Itération complète : tri par score (stable : l'ordre précédent départage).
             scored.sort_by_key(|(sc, _)| Reverse(*sc));
             let (score, (mv, idx)) = scored[0];
-            best = Pick { index: idx, depth, score, nodes: self.nodes };
+            best = Pick {
+                index: idx,
+                depth,
+                score,
+                nodes: self.nodes,
+            };
             best_mv = mv;
             self.owner.root_scores = scored.iter().map(|&(sc, (_, i))| (i, sc)).collect();
             root = scored.into_iter().map(|(_, x)| x).collect();
@@ -392,10 +448,22 @@ impl Search<'_> {
         if slot.key == key && slot.depth > depth as i8 && flag != Flag::Exact {
             return;
         }
-        *slot = Entry { key, score, mv, depth: depth as i8, flag };
+        *slot = Entry {
+            key,
+            score,
+            mv,
+            depth: depth as i8,
+            flag,
+        };
     }
 
-    fn negamax(&mut self, state: &State, depth: u8, mut alpha: i32, mut beta: i32) -> Result<i32, Timeout> {
+    fn negamax(
+        &mut self,
+        state: &State,
+        depth: u8,
+        mut alpha: i32,
+        mut beta: i32,
+    ) -> Result<i32, Timeout> {
         if state.over {
             return Ok(self.eval.evaluate(state, state.to_move));
         }
@@ -436,8 +504,10 @@ impl Search<'_> {
         }
 
         let guard_tree = self.owner.cfg.guard_tree;
-        let squares = (guard_tree > 0 && depth >= 2)
-            .then(|| self.eval.guard_squares(state, if state.to_move == 1 { 2 } else { 1 }));
+        let squares = (guard_tree > 0 && depth >= 2).then(|| {
+            self.eval
+                .guard_squares(state, if state.to_move == 1 { 2 } else { 1 })
+        });
         let (mut best, mut best_move) = (-INF, None);
         let (mut quiet, mut guarded, mut hunted) = (0usize, 0usize, 0usize);
         let hunt = if depth >= 2 { self.owner.cfg.hunt } else { 0 };
@@ -502,7 +572,13 @@ impl Search<'_> {
 
     /// Au bout de l'horizon : on poursuit les captures et les sorties jusqu'au calme. Le camp
     /// au trait peut « ne rien faire » : son évaluation sur place sert de plancher.
-    fn quiesce(&mut self, state: &State, mut alpha: i32, beta: i32, plies: u8) -> Result<i32, Timeout> {
+    fn quiesce(
+        &mut self,
+        state: &State,
+        mut alpha: i32,
+        beta: i32,
+        plies: u8,
+    ) -> Result<i32, Timeout> {
         let stand = self.eval.evaluate(state, state.to_move);
         if state.over || plies == 0 || stand >= beta {
             return Ok(stand);
@@ -536,11 +612,17 @@ mod tests {
             let mut s = new_game(heights);
             let mut seed = b as u64 + 1;
             while !s.over && s.ply < 80 {
-                let expected: Vec<Move> = ctx.ordered(&s).into_iter().filter(|m| matches!(m.kind, MoveKind::Exit | MoveKind::Attack)).collect();
+                let expected: Vec<Move> = ctx
+                    .ordered(&s)
+                    .into_iter()
+                    .filter(|m| matches!(m.kind, MoveKind::Exit | MoveKind::Attack))
+                    .collect();
                 assert_eq!(Search::tactical(&s), expected);
                 checked += 1;
                 let moves = legal_moves(&s);
-                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                seed = seed
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 s = apply_move(&s, &moves[(seed >> 33) as usize % moves.len()]);
             }
         }

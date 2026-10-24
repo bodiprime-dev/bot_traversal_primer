@@ -19,7 +19,9 @@ use std::time::Duration;
 use piolet::boards;
 use piolet::eval::{Eval, Weights};
 use piolet::search::{Config, Piolet};
-use traversal_bot::core::{apply_move, choose_move, legal_moves, new_game, Kind, Level, Move, MoveKind, Rng, State};
+use traversal_bot::core::{
+    apply_move, choose_move, legal_moves, new_game, Kind, Level, Move, MoveKind, Rng, State,
+};
 
 thread_local! {
     static CALLS_LEFT: Cell<u64> = const { Cell::new(0) };
@@ -106,7 +108,11 @@ fn describe(s: &State, m: &Move) -> String {
         MoveKind::Exit => format!("sortie ({})", kind_name(s.piece(m.piece).kind)),
         MoveKind::Attack => {
             let t = s.piece(s.at(m.to).expect("cible"));
-            format!("capture d'un(e) {} par {}", kind_name(t.kind), kind_name(s.piece(m.piece).kind))
+            format!(
+                "capture d'un(e) {} par {}",
+                kind_name(t.kind),
+                kind_name(s.piece(m.piece).kind)
+            )
         }
         MoveKind::Move => format!("déplacement ({})", kind_name(s.piece(m.piece).kind)),
     }
@@ -126,14 +132,19 @@ fn play(board: usize, heights: [u8; 100], nodes: u64) -> Vec<Case> {
             let caps: Vec<Move> = moves
                 .iter()
                 .copied()
-                .filter(|m| m.kind == MoveKind::Attack && s.piece(s.at(m.to).expect("cible")).kind == Kind::Sentinel)
+                .filter(|m| {
+                    m.kind == MoveKind::Attack
+                        && s.piece(s.at(m.to).expect("cible")).kind == Kind::Sentinel
+                })
                 .collect();
             if !caps.is_empty() && !caps.contains(&mv) {
                 let cap = caps[0];
                 let after = apply_move(&s, &cap);
                 let attacker = after.at(cap.to).map(|j| after.piece(j));
                 let recapture = attacker.is_some_and(|p| eval.capturable(&after, p));
-                let our_sentinel_hit = after.pieces().iter().any(|p| p.owner == 2 && p.kind == Kind::Sentinel && eval.capturable(&after, *p));
+                let our_sentinel_hit = after.pieces().iter().any(|p| {
+                    p.owner == 2 && p.kind == Kind::Sentinel && eval.capturable(&after, *p)
+                });
                 let played_state = apply_move(&s, &mv);
                 let case = Case {
                     board,
@@ -180,7 +191,10 @@ fn play(board: usize, heights: [u8; 100], nodes: u64) -> Vec<Case> {
 }
 
 fn arg(args: &[String], name: &str, default: u64) -> u64 {
-    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).map_or(default, |v| v.parse().expect("nombre"))
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|i| args.get(i + 1))
+        .map_or(default, |v| v.parse().expect("nombre"))
 }
 
 fn main() {
@@ -206,13 +220,31 @@ fn main() {
     let mut all = done.into_inner().unwrap();
     all.sort_by_key(|c| (c.board, c.ply));
 
-    println!("Captures de Sentinelle rouge refusées par Piolet (Bleu) : {} cas", all.len());
+    println!(
+        "Captures de Sentinelle rouge refusées par Piolet (Bleu) : {} cas",
+        all.len()
+    );
     let count = |f: &dyn Fn(&Case) -> bool| all.iter().filter(|c| f(c)).count();
-    println!("  la Sentinelle épargnée a gagné la partie : {}", count(&|c| c.decisive));
-    println!("  reprise possible de la pièce qui capture : {}", count(&|c| c.recapture));
-    println!("  notre Sentinelle capturable après la capture : {}", count(&|c| c.our_sentinel_hit));
-    println!("  évaluation statique : capture jugée meilleure : {}", count(&|c| c.static_capture > c.static_played));
-    println!("  recherche au même budget : capture jugée meilleure : {}", count(&|c| c.search_capture > c.search_played));
+    println!(
+        "  la Sentinelle épargnée a gagné la partie : {}",
+        count(&|c| c.decisive)
+    );
+    println!(
+        "  reprise possible de la pièce qui capture : {}",
+        count(&|c| c.recapture)
+    );
+    println!(
+        "  notre Sentinelle capturable après la capture : {}",
+        count(&|c| c.our_sentinel_hit)
+    );
+    println!(
+        "  évaluation statique : capture jugée meilleure : {}",
+        count(&|c| c.static_capture > c.static_played)
+    );
+    println!(
+        "  recherche au même budget : capture jugée meilleure : {}",
+        count(&|c| c.search_capture > c.search_played)
+    );
     let mut by: BTreeMap<String, usize> = BTreeMap::new();
     for c in &all {
         *by.entry(c.played.clone()).or_default() += 1;

@@ -60,14 +60,24 @@ fn next(seed: &mut u64) -> u64 {
 fn weights(base: &Weights, theta: &[f64]) -> Weights {
     let mut w = *base;
     for (i, (name, _, lo, hi)) in PARAMS.iter().enumerate() {
-        w.set(name, theta[i].clamp(*lo, *hi).round() as i32).expect("nom");
+        w.set(name, theta[i].clamp(*lo, *hi).round() as i32)
+            .expect("nom");
     }
     w
 }
 
 /// Résultat pour Rouge : 1 victoire, 0,5 nulle, 0 défaite.
 fn play(heights: [u8; 100], red: Weights, blue: Weights, nodes: u64) -> f64 {
-    let mut bots = [Piolet::new(Config { weights: red, ..Config::default() }), Piolet::new(Config { weights: blue, ..Config::default() })];
+    let mut bots = [
+        Piolet::new(Config {
+            weights: red,
+            ..Config::default()
+        }),
+        Piolet::new(Config {
+            weights: blue,
+            ..Config::default()
+        }),
+    ];
     let mut s = new_game(heights);
     while !s.over {
         let moves = legal_moves(&s);
@@ -83,7 +93,11 @@ fn play(heights: [u8; 100], red: Weights, blue: Weights, nodes: u64) -> f64 {
 }
 
 fn arg(args: &[String], name: &str, default: &str) -> String {
-    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned().unwrap_or_else(|| default.to_string())
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|i| args.get(i + 1))
+        .cloned()
+        .unwrap_or_else(|| default.to_string())
 }
 
 fn main() {
@@ -98,7 +112,10 @@ fn main() {
     let mut base = Weights::default();
     base.apply(&arg(&args, "--w", "")).expect("--w");
 
-    let theta0: Vec<f64> = PARAMS.iter().map(|(n, ..)| base.get(n).expect("nom") as f64).collect();
+    let theta0: Vec<f64> = PARAMS
+        .iter()
+        .map(|(n, ..)| base.get(n).expect("nom") as f64)
+        .collect();
     let scale: Vec<f64> = PARAMS.iter().map(|p| p.1).collect();
     let mut x = vec![0.0f64; PARAMS.len()];
     let big_a = iters as f64 / 10.0;
@@ -107,25 +124,47 @@ fn main() {
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
 
     let mut csv = std::fs::File::create(&out).expect("--out");
-    writeln!(csv, "iter,r,{}", PARAMS.iter().map(|p| p.0).collect::<Vec<_>>().join(",")).unwrap();
+    writeln!(
+        csv,
+        "iter,r,{}",
+        PARAMS.iter().map(|p| p.0).collect::<Vec<_>>().join(",")
+    )
+    .unwrap();
     for k in 0..iters {
         let ck = c / ((k + 1) as f64).powf(0.101);
         let ak = a / ((k + 1) as f64 + big_a).powf(0.602);
-        let delta: Vec<f64> = (0..PARAMS.len()).map(|_| if next(&mut seed) & 1 == 0 { 1.0 } else { -1.0 }).collect();
-        let theta = |sign: f64| -> Vec<f64> { (0..PARAMS.len()).map(|i| theta0[i] + scale[i] * (x[i] + sign * ck * delta[i])).collect() };
+        let delta: Vec<f64> = (0..PARAMS.len())
+            .map(|_| if next(&mut seed) & 1 == 0 { 1.0 } else { -1.0 })
+            .collect();
+        let theta = |sign: f64| -> Vec<f64> {
+            (0..PARAMS.len())
+                .map(|i| theta0[i] + scale[i] * (x[i] + sign * ck * delta[i]))
+                .collect()
+        };
         let (plus, minus) = (weights(&base, &theta(1.0)), weights(&base, &theta(-1.0)));
-        let picked: Vec<usize> = (0..per_iter).map(|_| (next(&mut seed) % boards.len() as u64) as usize).collect();
+        let picked: Vec<usize> = (0..per_iter)
+            .map(|_| (next(&mut seed) % boards.len() as u64) as usize)
+            .collect();
 
         // 2 parties par carte (θ+ en Rouge puis en Bleu), en parallèle.
-        let jobs: Vec<(usize, bool)> = picked.iter().flat_map(|&b| [(b, true), (b, false)]).collect();
+        let jobs: Vec<(usize, bool)> = picked
+            .iter()
+            .flat_map(|&b| [(b, true), (b, false)])
+            .collect();
         let next_job = AtomicUsize::new(0);
         let total = Mutex::new(0.0f64);
         std::thread::scope(|scope| {
             for _ in 0..threads {
                 scope.spawn(|| loop {
                     let j = next_job.fetch_add(1, Ordering::Relaxed);
-                    let Some(&(b, plus_red)) = jobs.get(j) else { break };
-                    let score = if plus_red { play(boards[b], plus, minus, nodes) } else { 1.0 - play(boards[b], minus, plus, nodes) };
+                    let Some(&(b, plus_red)) = jobs.get(j) else {
+                        break;
+                    };
+                    let score = if plus_red {
+                        play(boards[b], plus, minus, nodes)
+                    } else {
+                        1.0 - play(boards[b], minus, plus, nodes)
+                    };
                     *total.lock().unwrap() += score;
                 });
             }
@@ -137,12 +176,25 @@ fn main() {
             let (lo, hi) = (PARAMS[i].2, PARAMS[i].3);
             x[i] = x[i].clamp((lo - theta0[i]) / scale[i], (hi - theta0[i]) / scale[i]);
         }
-        let now: Vec<f64> = (0..PARAMS.len()).map(|i| theta0[i] + scale[i] * x[i]).collect();
-        writeln!(csv, "{k},{r:.3},{}", now.iter().map(|v| format!("{v:.2}")).collect::<Vec<_>>().join(",")).unwrap();
+        let now: Vec<f64> = (0..PARAMS.len())
+            .map(|i| theta0[i] + scale[i] * x[i])
+            .collect();
+        writeln!(
+            csv,
+            "{k},{r:.3},{}",
+            now.iter()
+                .map(|v| format!("{v:.2}"))
+                .collect::<Vec<_>>()
+                .join(",")
+        )
+        .unwrap();
         csv.flush().unwrap();
         if (k + 1) % 25 == 0 || k + 1 == iters {
             let w = weights(&base, &now);
-            let line: Vec<String> = PARAMS.iter().map(|(n, ..)| format!("{n}={}", w.get(n).unwrap())).collect();
+            let line: Vec<String> = PARAMS
+                .iter()
+                .map(|(n, ..)| format!("{n}={}", w.get(n).unwrap()))
+                .collect();
             println!("itération {} : --w \"{}\"", k + 1, line.join(","));
         }
     }

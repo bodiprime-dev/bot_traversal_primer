@@ -24,7 +24,7 @@ use std::sync::Mutex;
 use piolet::boards;
 use piolet::eval::{Eval, Weights};
 use piolet::nn::features;
-use piolet::search::{Config, Piolet, Pick};
+use piolet::search::{Config, Pick, Piolet};
 use traversal_bot::core::bot::WIN;
 use traversal_bot::core::{apply_move, legal_moves, new_game, MoveKind};
 
@@ -58,15 +58,25 @@ struct Opts {
 
 fn play(board: usize, heights: [u8; 100], o: &Opts, mut seed: u64) -> Vec<String> {
     let eval = Eval::new(&heights, Weights::default());
-    let mut deep = [Piolet::new(Config::default()), Piolet::new(Config::default())];
-    let mut shallow = [Piolet::new(Config::default()), Piolet::new(Config::default())];
+    let mut deep = [
+        Piolet::new(Config::default()),
+        Piolet::new(Config::default()),
+    ];
+    let mut shallow = [
+        Piolet::new(Config::default()),
+        Piolet::new(Config::default()),
+    ];
     let mut s = new_game(heights);
     let mut rows = Vec::new();
     while !s.over {
         let moves = legal_moves(&s);
         if s.ply < o.random || moves.len() <= 1 {
             let quiet: Vec<_> = moves.iter().filter(|m| m.kind != MoveKind::Pass).collect();
-            let mv = if quiet.is_empty() { moves[0] } else { *quiet[(next(&mut seed) % quiet.len() as u64) as usize] };
+            let mv = if quiet.is_empty() {
+                moves[0]
+            } else {
+                *quiet[(next(&mut seed) % quiet.len() as u64) as usize]
+            };
             s = apply_move(&s, &mv);
             continue;
         }
@@ -80,9 +90,17 @@ fn play(board: usize, heights: [u8; 100], o: &Opts, mut seed: u64) -> Vec<String
         if scores.len() >= 2 && scores[0].1.abs() < WIN - 1000 {
             // Difficile : le coup de la recherche courte est VRAIMENT moins bon (au moins `gap`
             // points sous le meilleur, ou élagué), pas seulement un coup équivalent.
-            let witness_score = scores.iter().find(|&&(i, _)| i == witness.index).map_or(Pick::UNSEARCHED, |&(_, sc)| sc);
-            let hard = witness.index != scores[0].0 && (witness_score == Pick::UNSEARCHED || scores[0].1 - witness_score >= o.gap);
-            let gap = if scores[1].1 == Pick::UNSEARCHED { 1000 } else { scores[0].1 - scores[1].1 };
+            let witness_score = scores
+                .iter()
+                .find(|&&(i, _)| i == witness.index)
+                .map_or(Pick::UNSEARCHED, |&(_, sc)| sc);
+            let hard = witness.index != scores[0].0
+                && (witness_score == Pick::UNSEARCHED || scores[0].1 - witness_score >= o.gap);
+            let gap = if scores[1].1 == Pick::UNSEARCHED {
+                1000
+            } else {
+                scores[0].1 - scores[1].1
+            };
             if hard || gap >= o.gap {
                 // Candidats : le meilleur, les suivants, puis quelques-uns au hasard parmi le reste.
                 let top = (o.k / 2 + 1).min(scores.len());
@@ -102,10 +120,19 @@ fn play(board: usize, heights: [u8; 100], o: &Opts, mut seed: u64) -> Vec<String
                         let child_score = if sc == Pick::UNSEARCHED { sc } else { -sc };
                         let dense: Vec<String> = dense.iter().map(|v| format!("{v:.4}")).collect();
                         let sparse: Vec<String> = sparse.iter().map(|v| v.to_string()).collect();
-                        format!("{child_score}|{stat}|{}|{}", dense.join(","), sparse.join(","))
+                        format!(
+                            "{child_score}|{stat}|{}|{}",
+                            dense.join(","),
+                            sparse.join(",")
+                        )
                     })
                     .collect();
-                rows.push(format!("{board};{};{};{gap};{}", s.ply, hard as u8, cands.join(" ")));
+                rows.push(format!(
+                    "{board};{};{};{gap};{}",
+                    s.ply,
+                    hard as u8,
+                    cands.join(" ")
+                ));
             }
         }
         s = apply_move(&s, &moves[pick.index]);
@@ -114,7 +141,10 @@ fn play(board: usize, heights: [u8; 100], o: &Opts, mut seed: u64) -> Vec<String
 }
 
 fn arg(args: &[String], name: &str, default: u64) -> u64 {
-    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).map_or(default, |v| v.parse().expect("nombre"))
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|i| args.get(i + 1))
+        .map_or(default, |v| v.parse().expect("nombre"))
 }
 
 fn main() {
@@ -140,7 +170,12 @@ fn main() {
                 if g >= first + games {
                     break;
                 }
-                let rows = play(g % boards.len(), boards[g % boards.len()], &o, seed0.wrapping_mul(1_000_003) + g as u64);
+                let rows = play(
+                    g % boards.len(),
+                    boards[g % boards.len()],
+                    &o,
+                    seed0.wrapping_mul(1_000_003) + g as u64,
+                );
                 let mut out = out.lock().unwrap();
                 for r in rows {
                     writeln!(out, "{r}").unwrap();

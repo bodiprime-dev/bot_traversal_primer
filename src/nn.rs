@@ -33,10 +33,20 @@ pub fn features(eval: &Eval, state: &State) -> (Vec<u16>, [f32; DENSE]) {
 
 /// Comme `features`, avec les tours de sortie par pièce déjà calculés (`Eval::piece_turns` : deux
 /// Dijkstra, la partie coûteuse), pour ne pas les refaire quand l'évaluation les a déjà.
-pub fn features_with(eval: &Eval, state: &State, turns: &[i32; traversal_bot::core::state::MAX_PIECES]) -> (Vec<u16>, [f32; DENSE]) {
+pub fn features_with(
+    eval: &Eval,
+    state: &State,
+    turns: &[i32; traversal_bot::core::state::MAX_PIECES],
+) -> (Vec<u16>, [f32; DENSE]) {
     let me = state.to_move;
     let them = if me == 1 { 2 } else { 1 };
-    let rot = |sq: u8| if me == 1 { sq as usize } else { SQUARES - 1 - sq as usize };
+    let rot = |sq: u8| {
+        if me == 1 {
+            sq as usize
+        } else {
+            SQUARES - 1 - sq as usize
+        }
+    };
     let rel = |owner: u8| if owner == me { 0 } else { 1 };
 
     let mut sparse = Vec::with_capacity(12);
@@ -67,10 +77,18 @@ pub fn features_with(eval: &Eval, state: &State, turns: &[i32; traversal_bot::co
     }
     // Course en temps : marge en demi-coups (trait inclus) entre les meilleures Sentinelles.
     let sentinel = |o: u8| {
-        state.pieces().iter().enumerate().filter(|(_, p)| p.owner == o && p.kind == Kind::Sentinel).map(|(i, _)| turns[i]).min()
+        state
+            .pieces()
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.owner == o && p.kind == Kind::Sentinel)
+            .map(|(i, _)| turns[i])
+            .min()
     };
     let margin = match (sentinel(me), sentinel(them)) {
-        (Some(a), Some(b)) => (Eval::plies(state, them, b) - Eval::plies(state, me, a)).clamp(-10, 10),
+        (Some(a), Some(b)) => {
+            (Eval::plies(state, them, b) - Eval::plies(state, me, a)).clamp(-10, 10)
+        }
         (Some(_), None) => 10,
         (None, Some(_)) => -10,
         (None, None) => 0,
@@ -81,7 +99,12 @@ pub fn features_with(eval: &Eval, state: &State, turns: &[i32; traversal_bot::co
     dense[n + 3] = state.finished as f32 / 2.0;
     dense[n + 4] = state.ply as f32 / state.move_limit.max(1) as f32;
     let threatened = |o: u8| {
-        state.pieces().iter().filter(|p| p.owner == o && p.kind == Kind::Sentinel && eval.capturable(state, **p)).count() as f32 / 2.0
+        state
+            .pieces()
+            .iter()
+            .filter(|p| p.owner == o && p.kind == Kind::Sentinel && eval.capturable(state, **p))
+            .count() as f32
+            / 2.0
     };
     dense[n + 5] = threatened(me);
     dense[n + 6] = threatened(them);
@@ -138,7 +161,12 @@ mod tests {
         for _ in 0..30 {
             let (sparse, dense) = features(&e, &s);
             assert!(sparse.iter().all(|&i| (i as usize) < SPARSE));
-            assert!(dense.iter().all(|v| v.is_finite() && (-1.0..=1.5).contains(v)), "{dense:?}");
+            assert!(
+                dense
+                    .iter()
+                    .all(|v| v.is_finite() && (-1.0..=1.5).contains(v)),
+                "{dense:?}"
+            );
             if s.over {
                 break;
             }
@@ -172,9 +200,13 @@ impl Net {
         let u = |i: usize| u32::from_le_bytes(b[4 + 4 * i..8 + 4 * i].try_into().unwrap()) as usize;
         let (sparse, dense, h1, h2) = (u(0), u(1), u(2), u(3));
         if sparse != SPARSE || dense != DENSE || h1 > MAX_H1 || h2 > MAX_H2 {
-            return Err(format!("tailles {sparse}+{dense} -> {h1} -> {h2} incompatibles"));
+            return Err(format!(
+                "tailles {sparse}+{dense} -> {h1} -> {h2} incompatibles"
+            ));
         }
-        let mut floats = b[20..].chunks_exact(4).map(|c| f32::from_le_bytes(c.try_into().unwrap()));
+        let mut floats = b[20..]
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes(c.try_into().unwrap()));
         let mut take = |n: usize| -> Result<Vec<f32>, String> {
             let v: Vec<f32> = floats.by_ref().take(n).collect();
             if v.len() == n {
@@ -225,7 +257,12 @@ impl Net {
                 }
             }
         }
-        self.b3 + a2[..h2].iter().zip(&self.w3).map(|(&a, w)| a.max(0.0) * w).sum::<f32>()
+        self.b3
+            + a2[..h2]
+                .iter()
+                .zip(&self.w3)
+                .map(|(&a, w)| a.max(0.0) * w)
+                .sum::<f32>()
     }
 }
 

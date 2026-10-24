@@ -21,7 +21,9 @@ use piolet::boards;
 use piolet::eval::{exact_turns, Weights};
 use piolet::search::{Config, Piolet};
 use traversal_bot::core::bot::exit_costs;
-use traversal_bot::core::{apply_move, choose_move, legal_moves, new_game, Kind, Level, Move, MoveKind, Rng, State};
+use traversal_bot::core::{
+    apply_move, choose_move, legal_moves, new_game, Kind, Level, Move, MoveKind, Rng, State,
+};
 
 thread_local! {
     /// Appels restants à `stop` (un appel tous les 64 nœuds) pour le coup en cours.
@@ -86,7 +88,11 @@ struct Game {
 fn sprint_move(s: &State, moves: &[Move], turns: &[u8; 100], cost: &[u16; 100]) -> Option<Move> {
     // `Pass` n'a pas de pièce (indice 255) : l'écarter avant `s.piece`.
     let sentinel = |m: &&Move| m.kind != MoveKind::Pass && s.piece(m.piece).kind == Kind::Sentinel;
-    if let Some(m) = moves.iter().filter(sentinel).find(|m| m.kind == MoveKind::Exit) {
+    if let Some(m) = moves
+        .iter()
+        .filter(sentinel)
+        .find(|m| m.kind == MoveKind::Exit)
+    {
         return Some(*m);
     }
     moves
@@ -115,22 +121,45 @@ struct Opening {
     seed: u64,
 }
 
-fn play(board: [u8; 100], piolet_side: u8, nodes: u64, cfg: Config, sprint: bool, open: &Opening, game: usize) -> Game {
+fn play(
+    board: [u8; 100],
+    piolet_side: u8,
+    nodes: u64,
+    cfg: Config,
+    sprint: bool,
+    open: &Opening,
+    game: usize,
+) -> Game {
     let mut bot = Piolet::new(cfg);
     let mut s = new_game(board);
-    let mut oseed = open.seed.wrapping_mul(1_000_003).wrapping_add(game as u64 / 2); // même ouverture dans les deux couleurs
+    let mut oseed = open
+        .seed
+        .wrapping_mul(1_000_003)
+        .wrapping_add(game as u64 / 2); // même ouverture dans les deux couleurs
     while s.ply < open.plies && !s.over {
         let moves = legal_moves(&s);
-        let quiet: Vec<_> = moves.iter().filter(|m| m.kind != MoveKind::Pass && m.kind != MoveKind::Exit).collect();
-        let mv = if quiet.is_empty() { moves[0] } else { *quiet[(splitmix(&mut oseed) % quiet.len() as u64) as usize] };
+        let quiet: Vec<_> = moves
+            .iter()
+            .filter(|m| m.kind != MoveKind::Pass && m.kind != MoveKind::Exit)
+            .collect();
+        let mv = if quiet.is_empty() {
+            moves[0]
+        } else {
+            *quiet[(splitmix(&mut oseed) % quiet.len() as u64) as usize]
+        };
         s = apply_move(&s, &mv);
     }
-    let (turns, cost) = (exact_turns(&board, piolet_side, Kind::Sentinel), exit_costs(&board, piolet_side));
+    let (turns, cost) = (
+        exact_turns(&board, piolet_side, Kind::Sentinel),
+        exit_costs(&board, piolet_side),
+    );
     let mut exits = Vec::new();
     let mut captures = Vec::new();
     while !s.over {
         let moves = legal_moves(&s);
-        let sprinted = (sprint && s.to_move == piolet_side).then(|| sprint_move(&s, &moves, &turns, &cost)).flatten();
+        let sprinted = (sprint && s.to_move == piolet_side)
+            .then(|| sprint_move(&s, &moves, &turns, &cost))
+            .flatten();
         let mv = if let Some(m) = sprinted {
             m
         } else if s.to_move == piolet_side {
@@ -140,11 +169,20 @@ fn play(board: [u8; 100], piolet_side: u8, nodes: u64, cfg: Config, sprint: bool
             choose_move(&s, MONT_BLANC, &mut Rng::new(s.ply as u64)).mv
         };
         if mv.kind == MoveKind::Exit {
-            exits.push(Exit { piolet: s.to_move == piolet_side, kind: s.piece(mv.piece).kind, ply: s.ply });
+            exits.push(Exit {
+                piolet: s.to_move == piolet_side,
+                kind: s.piece(mv.piece).kind,
+                ply: s.ply,
+            });
         }
         if mv.kind == MoveKind::Attack {
             let target = s.piece(s.at(mv.to).expect("cible")).kind;
-            captures.push((s.to_move == piolet_side, s.piece(mv.piece).kind, target, s.ply));
+            captures.push((
+                s.to_move == piolet_side,
+                s.piece(mv.piece).kind,
+                target,
+                s.ply,
+            ));
         }
         s = apply_move(&s, &mv);
     }
@@ -156,12 +194,26 @@ fn play(board: [u8; 100], piolet_side: u8, nodes: u64, cfg: Config, sprint: bool
     // Sentinelles ni sur le plateau ni sorties : capturées.
     let lost = |piolet: bool| {
         let owner = if piolet { piolet_side } else { 3 - piolet_side };
-        let on_board = s.pieces().iter().filter(|p| p.owner == owner && p.kind == Kind::Sentinel).count();
-        let out = exits.iter().filter(|e| e.piolet == piolet && e.kind == Kind::Sentinel).count();
+        let on_board = s
+            .pieces()
+            .iter()
+            .filter(|p| p.owner == owner && p.kind == Kind::Sentinel)
+            .count();
+        let out = exits
+            .iter()
+            .filter(|e| e.piolet == piolet && e.kind == Kind::Sentinel)
+            .count();
         2 - on_board - out
     };
     let sentinels_lost = (lost(true), lost(false));
-    Game { index: 0, result, reason: s.reason.map_or("?", |r| r.name()), exits, captures, sentinels_lost }
+    Game {
+        index: 0,
+        result,
+        reason: s.reason.map_or("?", |r| r.name()),
+        exits,
+        captures,
+        sentinels_lost,
+    }
 }
 
 fn arg(args: &[String], name: &str, default: u64) -> u64 {
@@ -189,14 +241,26 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let games = arg(&args, "--games", 200) as usize;
     let nodes = arg(&args, "--nodes", 3600);
-    let threads = arg(&args, "--threads", std::thread::available_parallelism().map_or(4, |n| n.get() as u64)) as usize;
+    let threads = arg(
+        &args,
+        "--threads",
+        std::thread::available_parallelism().map_or(4, |n| n.get() as u64),
+    ) as usize;
     let weights = Weights {
         start_race: arg(&args, "--start", Weights::default().start_race as u64) as i32,
         exit_race: arg(&args, "--race", Weights::default().exit_race as u64) as i32,
         race_spread: arg(&args, "--spread", Weights::default().race_spread as u64) as i32,
-        race_spread_per: arg(&args, "--spread-per", Weights::default().race_spread_per as u64) as i32,
+        race_spread_per: arg(
+            &args,
+            "--spread-per",
+            Weights::default().race_spread_per as u64,
+        ) as i32,
         wall_defense: arg(&args, "--wall", Weights::default().wall_defense as u64) as i32,
-        sentinel_pressure: arg(&args, "--pressure", Weights::default().sentinel_pressure as u64) as i32,
+        sentinel_pressure: arg(
+            &args,
+            "--pressure",
+            Weights::default().sentinel_pressure as u64,
+        ) as i32,
         sentinel_alive: arg(&args, "--alive", Weights::default().sentinel_alive as u64) as i32,
         exact_turns: arg(&args, "--exact", Weights::default().exact_turns as u64) != 0,
         sentinel_threat: arg(&args, "--threat", Weights::default().sentinel_threat as u64) as i32,
@@ -208,7 +272,11 @@ fn main() {
     };
     // Réglages par nom, appliqués en dernier : --w "value_e=20,progress_s=11".
     let mut weights = weights;
-    if let Some(w) = args.iter().position(|a| a == "--w").and_then(|i| args.get(i + 1)) {
+    if let Some(w) = args
+        .iter()
+        .position(|a| a == "--w")
+        .and_then(|i| args.get(i + 1))
+    {
         weights.apply(w).expect("--w");
     }
     let cfg = Config {
@@ -221,7 +289,10 @@ fn main() {
         ..Config::default()
     };
     let sprint = arg(&args, "--sprint", 0) != 0;
-    let opening = Opening { plies: arg(&args, "--open", 0) as u16, seed: arg(&args, "--oseed", 1) };
+    let opening = Opening {
+        plies: arg(&args, "--open", 0) as u16,
+        seed: arg(&args, "--oseed", 1),
+    };
     let boards = boards();
 
     let next = AtomicUsize::new(0);
@@ -234,7 +305,18 @@ fn main() {
                     break;
                 }
                 let side = if g % 2 == 0 { 1 } else { 2 };
-                let game = Game { index: g, ..play(boards[(g / 2) % boards.len()], side, nodes, cfg, sprint, &opening, g) };
+                let game = Game {
+                    index: g,
+                    ..play(
+                        boards[(g / 2) % boards.len()],
+                        side,
+                        nodes,
+                        cfg,
+                        sprint,
+                        &opening,
+                        g,
+                    )
+                };
                 done.lock().unwrap().push(game);
             });
         }
@@ -243,19 +325,38 @@ fn main() {
     all.sort_by_key(|g| g.index);
 
     // Une ligne par partie, pour comparer deux réglages partie par partie (`diff`).
-    if let Some(path) = args.iter().position(|a| a == "--list").and_then(|i| args.get(i + 1)) {
+    if let Some(path) = args
+        .iter()
+        .position(|a| a == "--list")
+        .and_then(|i| args.get(i + 1))
+    {
         let lines: Vec<String> = all
             .iter()
             .map(|g| {
                 let exits: Vec<String> = g
                     .exits
                     .iter()
-                    .map(|e| format!("{}:{}@{}", if e.piolet { "P" } else { "M" }, &kind_name(e.kind)[..1], e.ply))
+                    .map(|e| {
+                        format!(
+                            "{}:{}@{}",
+                            if e.piolet { "P" } else { "M" },
+                            &kind_name(e.kind)[..1],
+                            e.ply
+                        )
+                    })
                     .collect();
                 let captures: Vec<String> = g
                     .captures
                     .iter()
-                    .map(|&(p, a, t, ply)| format!("{}:{}x{}@{}", if p { "P" } else { "M" }, &kind_name(a)[..1], &kind_name(t)[..1], ply))
+                    .map(|&(p, a, t, ply)| {
+                        format!(
+                            "{}:{}x{}@{}",
+                            if p { "P" } else { "M" },
+                            &kind_name(a)[..1],
+                            &kind_name(t)[..1],
+                            ply
+                        )
+                    })
                     .collect();
                 format!(
                     "{:>3} {:>2} {:<10} {} perdues:{}/{} prises:{}",
@@ -273,7 +374,8 @@ fn main() {
     }
 
     let results: Vec<i32> = all.iter().map(|g| g.result).collect();
-    let score = (results.iter().filter(|&&r| r == 1).count() as f64 + 0.5 * results.iter().filter(|&&r| r == 0).count() as f64)
+    let score = (results.iter().filter(|&&r| r == 1).count() as f64
+        + 0.5 * results.iter().filter(|&&r| r == 0).count() as f64)
         / all.len() as f64;
     println!(
         "faisceau {} (historique : {}) ; parades : {} à la racine, {} par nœud ; chasse : {} ; tours exacts : {} ; menace : {} ; course en temps : {} (± {}) ; couverture : {} (plafond de puissance {})",
@@ -290,7 +392,11 @@ fn main() {
         weights.sentinel_alive,
         all.len()
     );
-    println!("  total                         {}  — score {:.1} %", wdl(&results), 100.0 * score);
+    println!(
+        "  total                         {}  — score {:.1} %",
+        wdl(&results),
+        100.0 * score
+    );
 
     let mut reasons: BTreeMap<&str, Vec<i32>> = BTreeMap::new();
     for g in &all {
@@ -306,17 +412,29 @@ fn main() {
     let mut gaps: BTreeMap<bool, Vec<u16>> = BTreeMap::new();
     for g in &all {
         let Some(e) = g.exits.first() else {
-            first.entry((false, "(aucune sortie)")).or_default().push(g.result);
+            first
+                .entry((false, "(aucune sortie)"))
+                .or_default()
+                .push(g.result);
             continue;
         };
-        first.entry((e.piolet, kind_name(e.kind))).or_default().push(g.result);
+        first
+            .entry((e.piolet, kind_name(e.kind)))
+            .or_default()
+            .push(g.result);
         if let Some(e2) = g.exits.get(1) {
             gaps.entry(e.piolet).or_default().push(e2.ply - e.ply);
         }
     }
     println!("\nPremière sortie (résultat pour Piolet) :");
     for ((piolet, kind), r) in &first {
-        let who = if *kind == "(aucune sortie)" { "" } else if *piolet { "Piolet  " } else { "MontBlanc" };
+        let who = if *kind == "(aucune sortie)" {
+            ""
+        } else if *piolet {
+            "Piolet  "
+        } else {
+            "MontBlanc"
+        };
         println!("  {who:<9} {kind:<19} {}", wdl(r));
     }
 
@@ -324,9 +442,17 @@ fn main() {
     println!("\nAprès une première sortie hors Sentinelle, la deuxième sortie :");
     for piolet_first in [true, false] {
         let mut by: BTreeMap<String, usize> = BTreeMap::new();
-        for g in all.iter().filter(|g| g.exits.first().is_some_and(|e| e.piolet == piolet_first && e.kind != Kind::Sentinel)) {
+        for g in all.iter().filter(|g| {
+            g.exits
+                .first()
+                .is_some_and(|e| e.piolet == piolet_first && e.kind != Kind::Sentinel)
+        }) {
             let key = match g.exits.get(1) {
-                Some(e) => format!("{} ({})", if e.piolet { "Piolet" } else { "Mont Blanc" }, kind_name(e.kind)),
+                Some(e) => format!(
+                    "{} ({})",
+                    if e.piolet { "Piolet" } else { "Mont Blanc" },
+                    kind_name(e.kind)
+                ),
                 None => "aucune (limite de coups)".into(),
             };
             *by.entry(key).or_default() += 1;

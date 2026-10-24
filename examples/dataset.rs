@@ -44,7 +44,10 @@ fn next(seed: &mut u64) -> u64 {
 /// Une position : (camp au trait, ligne sans le résultat).
 fn play(board: usize, heights: [u8; 100], nodes: u64, random: u16, mut seed: u64) -> Vec<String> {
     let eval = Eval::new(&heights, Weights::default());
-    let mut bots = [Piolet::new(Config::default()), Piolet::new(Config::default())];
+    let mut bots = [
+        Piolet::new(Config::default()),
+        Piolet::new(Config::default()),
+    ];
     let mut s = new_game(heights);
     let mut rows: Vec<(u8, String)> = Vec::new();
     while !s.over {
@@ -59,7 +62,13 @@ fn play(board: usize, heights: [u8; 100], nodes: u64, random: u16, mut seed: u64
                 let (sparse, dense) = features(&eval, &s);
                 let dense: Vec<String> = dense.iter().map(|v| format!("{v:.4}")).collect();
                 let sparse: Vec<String> = sparse.iter().map(|i| i.to_string()).collect();
-                let line = format!("{};{};{};{}", pick.score, eval.evaluate(&s, s.to_move), dense.join(","), sparse.join(","));
+                let line = format!(
+                    "{};{};{};{}",
+                    pick.score,
+                    eval.evaluate(&s, s.to_move),
+                    dense.join(","),
+                    sparse.join(",")
+                );
                 rows.push((s.to_move, line));
             }
             moves[pick.index]
@@ -79,7 +88,10 @@ fn play(board: usize, heights: [u8; 100], nodes: u64, random: u16, mut seed: u64
 }
 
 fn arg(args: &[String], name: &str, default: u64) -> u64 {
-    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).map_or(default, |v| v.parse().expect("nombre"))
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|i| args.get(i + 1))
+        .map_or(default, |v| v.parse().expect("nombre"))
 }
 
 fn main() {
@@ -101,7 +113,13 @@ fn main() {
                 if g >= first + games {
                     break;
                 }
-                let rows = play(g % boards.len(), boards[g % boards.len()], nodes, random, seed0.wrapping_mul(1_000_003) + g as u64);
+                let rows = play(
+                    g % boards.len(),
+                    boards[g % boards.len()],
+                    nodes,
+                    random,
+                    seed0.wrapping_mul(1_000_003) + g as u64,
+                );
                 let mut out = out.lock().unwrap();
                 for r in rows {
                     writeln!(out, "{r}").unwrap();

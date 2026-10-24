@@ -55,15 +55,25 @@ struct Opts {
 
 fn play(board: usize, heights: [u8; 100], o: &Opts, mut seed: u64) -> Vec<String> {
     let eval = Eval::new(&heights, Weights::default());
-    let mut deep = [Piolet::new(Config::default()), Piolet::new(Config::default())];
-    let mut shallow = [Piolet::new(Config::default()), Piolet::new(Config::default())];
+    let mut deep = [
+        Piolet::new(Config::default()),
+        Piolet::new(Config::default()),
+    ];
+    let mut shallow = [
+        Piolet::new(Config::default()),
+        Piolet::new(Config::default()),
+    ];
     let mut s = new_game(heights);
     let mut rows = Vec::new();
     while !s.over {
         let moves = legal_moves(&s);
         if s.ply < o.random || moves.len() <= 1 {
             let quiet: Vec<_> = moves.iter().filter(|m| m.kind != MoveKind::Pass).collect();
-            let mv = if quiet.is_empty() { moves[0] } else { *quiet[(next(&mut seed) % quiet.len() as u64) as usize] };
+            let mv = if quiet.is_empty() {
+                moves[0]
+            } else {
+                *quiet[(next(&mut seed) % quiet.len() as u64) as usize]
+            };
             s = apply_move(&s, &mv);
             continue;
         }
@@ -74,14 +84,20 @@ fn play(board: usize, heights: [u8; 100], o: &Opts, mut seed: u64) -> Vec<String
         let witness = shallow[side].choose(&s, &moves, out_of_nodes);
 
         if pick.score.abs() < WIN - 1000 && witness.depth >= 2 {
-            let (leaf, n) = shallow[side].pv_leaf(&s, &moves[witness.index], witness.depth as usize + 2);
+            let (leaf, n) =
+                shallow[side].pv_leaf(&s, &moves[witness.index], witness.depth as usize + 2);
             if !leaf.over {
                 // Score profond du camp qui joue à la racine -> camp qui joue dans la feuille.
                 let label = if n % 2 == 0 { pick.score } else { -pick.score };
                 let (sparse, dense) = features(&eval, &leaf);
                 let dense: Vec<String> = dense.iter().map(|v| format!("{v:.4}")).collect();
                 let sparse: Vec<String> = sparse.iter().map(|v| v.to_string()).collect();
-                rows.push(format!("{board};0;{label};{};{};{}", eval.evaluate(&leaf, leaf.to_move), dense.join(","), sparse.join(",")));
+                rows.push(format!(
+                    "{board};0;{label};{};{};{}",
+                    eval.evaluate(&leaf, leaf.to_move),
+                    dense.join(","),
+                    sparse.join(",")
+                ));
             }
         }
         s = apply_move(&s, &moves[pick.index]);
@@ -90,7 +106,10 @@ fn play(board: usize, heights: [u8; 100], o: &Opts, mut seed: u64) -> Vec<String
 }
 
 fn arg(args: &[String], name: &str, default: u64) -> u64 {
-    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).map_or(default, |v| v.parse().expect("nombre"))
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|i| args.get(i + 1))
+        .map_or(default, |v| v.parse().expect("nombre"))
 }
 
 fn main() {
@@ -98,7 +117,11 @@ fn main() {
     let first = arg(&args, "--first", 0) as usize;
     let games = arg(&args, "--games", 50) as usize;
     let seed0 = arg(&args, "--seed", 1);
-    let o = Opts { deep: arg(&args, "--nodes", 20_000), shallow: arg(&args, "--shallow", 3_000), random: arg(&args, "--random", 4) as u16 };
+    let o = Opts {
+        deep: arg(&args, "--nodes", 20_000),
+        shallow: arg(&args, "--shallow", 3_000),
+        random: arg(&args, "--random", 4) as u16,
+    };
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
     let boards = boards();
     let next_game = AtomicUsize::new(0);
@@ -110,7 +133,12 @@ fn main() {
                 if g >= first + games {
                     break;
                 }
-                let rows = play(g % boards.len(), boards[g % boards.len()], &o, seed0.wrapping_mul(1_000_003) + g as u64);
+                let rows = play(
+                    g % boards.len(),
+                    boards[g % boards.len()],
+                    &o,
+                    seed0.wrapping_mul(1_000_003) + g as u64,
+                );
                 let mut out = out.lock().unwrap();
                 for r in rows {
                     writeln!(out, "{r}").unwrap();

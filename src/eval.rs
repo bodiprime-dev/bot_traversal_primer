@@ -106,6 +106,14 @@ pub struct Weights {
     /// --residual` à corriger l'évaluation actuelle là où une recherche profonde la contredit.
     /// 270 : l'échelle de l'entraînement (points par unité de logit).
     pub nn_resid: i32,
+    /// Distance SÛRE des Sentinelles (0 : coupé ; n : allongement plafonné à n tours) : tours
+    /// pour sortir en ne s'arrêtant que sur des cases où aucune pièce adverse ne peut la capturer
+    /// au coup suivant (règle de combat : hauteur, charge de l'Avant-garde à coût exactement 4,
+    /// soutiens). Remplace la distance brute de la Sentinelle si elle est plus longue, d'au plus
+    /// `safe_race` tours (les pièces adverses bougent aussi : un chemin fermé maintenant ne l'est
+    /// pas pour toujours). Voit, dans les deux sens, une Avant-garde bien placée qui interdit une
+    /// zone et force un détour.
+    pub safe_race: i32,
 }
 
 impl Default for Weights {
@@ -114,13 +122,20 @@ impl Default for Weights {
         // des Sentinelles (voir HANDOFF.md). `exit_race` seule : 49,9 % -> 55,8 %.
         // `tempo_race` 25 : 254 parties améliorées / 204 dégradées sur 3 budgets (z ≈ +2,3),
         // surtout en Bleu ; arène wasm 70,6 % -> 72,5 %.
-        Weights { start_race: 0, exit_race: 400, race_spread: 3, race_spread_per: 4, tempo_race: 25, ..Weights::sdk() }
+        Weights {
+            start_race: 0,
+            exit_race: 400,
+            race_spread: 3,
+            race_spread_per: 4,
+            tempo_race: 25,
+            ..Weights::sdk()
+        }
     }
 }
 
 impl Weights {
     /// Noms des poids réglables par `set` / `get` (réglage automatique, options du duel).
-    pub const NAMES: [&'static str; 19] = [
+    pub const NAMES: [&'static str; 20] = [
         "value_e",
         "value_v",
         "value_s",
@@ -140,6 +155,7 @@ impl Weights {
         "nn",
         "nn_race",
         "nn_resid",
+        "safe_race",
     ];
 
     fn slot(&mut self, name: &str) -> Option<&mut i32> {
@@ -163,13 +179,16 @@ impl Weights {
             "nn" => &mut self.nn,
             "nn_race" => &mut self.nn_race,
             "nn_resid" => &mut self.nn_resid,
+            "safe_race" => &mut self.safe_race,
             _ => return None,
         })
     }
 
     /// Fixe un poids par son nom (voir `NAMES`).
     pub fn set(&mut self, name: &str, value: i32) -> Result<(), String> {
-        *self.slot(name).ok_or_else(|| format!("poids inconnu : {name}"))? = value;
+        *self
+            .slot(name)
+            .ok_or_else(|| format!("poids inconnu : {name}"))? = value;
         Ok(())
     }
 
@@ -180,8 +199,15 @@ impl Weights {
     /// Applique des réglages « nom=valeur,nom=valeur ».
     pub fn apply(&mut self, overrides: &str) -> Result<(), String> {
         for kv in overrides.split(',').filter(|s| !s.trim().is_empty()) {
-            let (k, v) = kv.split_once('=').ok_or_else(|| format!("attendu nom=valeur : {kv}"))?;
-            self.set(k.trim(), v.trim().parse().map_err(|_| format!("valeur invalide : {kv}"))?)?;
+            let (k, v) = kv
+                .split_once('=')
+                .ok_or_else(|| format!("attendu nom=valeur : {kv}"))?;
+            self.set(
+                k.trim(),
+                v.trim()
+                    .parse()
+                    .map_err(|_| format!("valeur invalide : {kv}"))?,
+            )?;
         }
         Ok(())
     }
@@ -218,6 +244,7 @@ impl Weights {
             nn: 0,
             nn_race: 0,
             nn_resid: 0,
+            safe_race: 0,
         }
     }
 }
@@ -239,7 +266,16 @@ pub fn attack_reach(heights: &[u8; SQUARES], kind: Kind) -> [u128; SQUARES] {
         }
         if kind == Kind::Explorer {
             let (x, y) = ((sq as usize % SIZE) as i32, (sq as usize / SIZE) as i32);
-            for (dx, dy) in [(1, 1), (1, -1), (-1, 1), (-1, -1), (0, 2), (2, 0), (0, -2), (-2, 0)] {
+            for (dx, dy) in [
+                (1, 1),
+                (1, -1),
+                (-1, 1),
+                (-1, -1),
+                (0, 2),
+                (2, 0),
+                (0, -2),
+                (-2, 0),
+            ] {
                 let (nx, ny) = (x + dx, y + dy);
                 if (0..SIZE as i32).contains(&nx) && (0..SIZE as i32).contains(&ny) {
                     bits |= 1 << (ny * SIZE as i32 + nx);
@@ -297,10 +333,21 @@ pub fn exact_turns(heights: &[u8; SQUARES], owner: u8, kind: Kind) -> [u8; SQUAR
         if (0..SIZE).any(|x| (dist[exit_row * SIZE + x] as u16) < budget as u16) {
             turns[sq as usize] = 1;
         }
-        let mut out: Vec<u8> = (0..SQUARES as u8).filter(|&s| s != sq && dist[s as usize] != u8::MAX).collect();
+        let mut out: Vec<u8> = (0..SQUARES as u8)
+            .filter(|&s| s != sq && dist[s as usize] != u8::MAX)
+            .collect();
         if kind == Kind::Explorer {
             let (x, y) = ((sq as usize % SIZE) as i32, (sq as usize / SIZE) as i32);
-            for (dx, dy) in [(1, 1), (1, -1), (-1, 1), (-1, -1), (0, 2), (2, 0), (0, -2), (-2, 0)] {
+            for (dx, dy) in [
+                (1, 1),
+                (1, -1),
+                (-1, 1),
+                (-1, -1),
+                (0, 2),
+                (2, 0),
+                (0, -2),
+                (-2, 0),
+            ] {
                 let (nx, ny) = (x + dx, y + dy);
                 if (0..SIZE as i32).contains(&nx) && (0..SIZE as i32).contains(&ny) {
                     out.push((ny * SIZE as i32 + nx) as u8);
@@ -314,7 +361,11 @@ pub fn exact_turns(heights: &[u8; SQUARES], owner: u8, kind: Kind) -> [u8; SQUAR
     while changed {
         changed = false;
         for sq in 0..SQUARES {
-            let best = next[sq].iter().map(|&s| turns[s as usize]).min().unwrap_or(u8::MAX);
+            let best = next[sq]
+                .iter()
+                .map(|&s| turns[s as usize])
+                .min()
+                .unwrap_or(u8::MAX);
             if best != u8::MAX && best + 1 < turns[sq] {
                 turns[sq] = best + 1;
                 changed = true;
@@ -341,16 +392,67 @@ pub struct Eval {
     /// (relief seul : marche de coût ≤ Mouvement, plus diagonales et bonds de l'Explorateur),
     /// si `cover`.
     reach: Option<Box<[[u128; SQUARES]; 3]>>,
+    /// Tables de la distance sûre, si `safe_race`.
+    safe: Option<Box<SafeTables>>,
+}
+
+/// Précalculs de la distance sûre (le relief ne change pas pendant la partie).
+struct SafeTables {
+    /// `walk[type][départ][arrivée]` : coût de marche, `u8::MAX` au-delà du Mouvement du type.
+    walk: [[[u8; SQUARES]; SQUARES]; 3],
+    /// Cases où une Sentinelle peut s'arrêter en un tour (relief seul), par case de départ.
+    turn: [u128; SQUARES],
+    /// Cases d'où une Sentinelle de chaque camp sort en un tour.
+    exit: [u128; 2],
 }
 
 impl Eval {
     pub fn new(heights: &[u8; SQUARES], w: Weights) -> Eval {
         let exact = w.exact_turns.then(|| {
-            let table = |o| [Kind::Explorer, Kind::Vanguard, Kind::Sentinel].map(|k| exact_turns(heights, o, k));
+            let table = |o| {
+                [Kind::Explorer, Kind::Vanguard, Kind::Sentinel].map(|k| exact_turns(heights, o, k))
+            };
             Box::new([table(1), table(2)])
         });
-        let reach = (w.cover != 0).then(|| Box::new([Kind::Explorer, Kind::Vanguard, Kind::Sentinel].map(|k| attack_reach(heights, k))));
-        Eval { costs: [exit_costs(heights, 1), exit_costs(heights, 2)], exact, w, buf: RefCell::new(Vec::with_capacity(64)), reach }
+        let reach = (w.cover != 0).then(|| {
+            Box::new(
+                [Kind::Explorer, Kind::Vanguard, Kind::Sentinel].map(|k| attack_reach(heights, k)),
+            )
+        });
+        let safe = (w.safe_race != 0).then(|| {
+            let mut walk = [[[u8::MAX; SQUARES]; SQUARES]; 3];
+            for (k, kind) in [Kind::Explorer, Kind::Vanguard, Kind::Sentinel]
+                .into_iter()
+                .enumerate()
+            {
+                for from in 0..SQUARES {
+                    walk[k][from] = self::walk(heights, from as u8, kind.movement());
+                }
+            }
+            let mut turn = [0u128; SQUARES];
+            for (from, t) in turn.iter_mut().enumerate() {
+                for to in 0..SQUARES {
+                    if to != from && walk[2][from][to] != u8::MAX {
+                        *t |= 1 << to;
+                    }
+                }
+            }
+            let exit = [1u8, 2].map(|o| {
+                let e = exact_turns(heights, o, Kind::Sentinel);
+                (0..SQUARES)
+                    .filter(|&s| e[s] == 1)
+                    .fold(0u128, |m, s| m | 1 << s)
+            });
+            Box::new(SafeTables { walk, turn, exit })
+        });
+        Eval {
+            costs: [exit_costs(heights, 1), exit_costs(heights, 2)],
+            exact,
+            w,
+            buf: RefCell::new(Vec::with_capacity(64)),
+            reach,
+            safe,
+        }
     }
 
     #[inline]
@@ -372,7 +474,10 @@ impl Eval {
         let mut out = [false; SQUARES];
         let turns = |p: &&Piece| Eval::turns_for(self.cost(p.owner, p.sq), p.kind);
         let theirs = || state.pieces().iter().filter(|p| p.owner == them);
-        let Some(runner) = theirs().filter(|p| p.kind == Kind::Sentinel).min_by_key(turns).or_else(|| theirs().min_by_key(turns))
+        let Some(runner) = theirs()
+            .filter(|p| p.kind == Kind::Sentinel)
+            .min_by_key(turns)
+            .or_else(|| theirs().min_by_key(turns))
         else {
             return out;
         };
@@ -394,7 +499,10 @@ impl Eval {
         }
         let total = self.cost(them, runner.sq);
         for sq in 0..SQUARES {
-            if sq != runner.sq as usize && from[sq] != u16::MAX && from[sq] as i32 + self.cost(them, sq as u8) == total {
+            if sq != runner.sq as usize
+                && from[sq] != u16::MAX
+                && from[sq] as i32 + self.cost(them, sq as u8) == total
+            {
                 out[sq] = true;
             }
         }
@@ -405,7 +513,10 @@ impl Eval {
     /// du moteur (`piece_moves`), limités aux pièces assez proches : une attaque coûte au
     /// moins la distance de Manhattan (un coup spécial de l'Explorateur, au plus 2 cases).
     pub fn capturable(&self, state: &State, target: Piece) -> bool {
-        let (tx, ty) = ((target.sq as usize % SIZE) as i32, (target.sq as usize / SIZE) as i32);
+        let (tx, ty) = (
+            (target.sq as usize % SIZE) as i32,
+            (target.sq as usize / SIZE) as i32,
+        );
         let mut buf = self.buf.borrow_mut();
         for (j, q) in state.pieces().iter().enumerate() {
             if q.owner == target.owner {
@@ -417,7 +528,10 @@ impl Eval {
             }
             buf.clear();
             piece_moves(state, j as u8, &mut buf);
-            if buf.iter().any(|m| m.kind == MoveKind::Attack && m.to == target.sq) {
+            if buf
+                .iter()
+                .any(|m| m.kind == MoveKind::Attack && m.to == target.sq)
+            {
                 return true;
             }
         }
@@ -442,16 +556,125 @@ impl Eval {
             return false;
         }
         let child = apply_move(state, m);
-        let hunted = child.pieces().iter().filter(|p| p.owner != mover && p.kind == Kind::Sentinel).any(|p| self.capturable(&child, *p));
+        let hunted = child
+            .pieces()
+            .iter()
+            .filter(|p| p.owner != mover && p.kind == Kind::Sentinel)
+            .any(|p| self.capturable(&child, *p));
         // Déjà capturable avant le coup : ce n'est pas lui qui crée la menace.
-        hunted && !state.pieces().iter().filter(|p| p.owner != mover && p.kind == Kind::Sentinel).any(|p| self.capturable(state, *p))
+        hunted
+            && !state
+                .pieces()
+                .iter()
+                .filter(|p| p.owner != mover && p.kind == Kind::Sentinel)
+                .any(|p| self.capturable(state, *p))
+    }
+
+    /// Cases où une Sentinelle de `owner` serait capturable par une pièce adverse au coup suivant
+    /// (champ de bits). Règle de combat (R7) : Force de l'attaquant, ±1 selon la hauteur de sa
+    /// case, +1 de charge pour l'Avant-garde à coût exactement 4, + Force des autres pièces adverses
+    /// voisines de la case ; défense : 3 + 1 par allié voisin. Marche sur le relief seul (les pièces
+    /// sur le chemin de l'attaquant sont ignorées) ; diagonales et bonds de l'Explorateur compris.
+    /// `mover` : indice de la Sentinelle qui se déplace (elle ne se soutient pas elle-même).
+    fn danger(&self, state: &State, mover: u8) -> u128 {
+        let tables = self.safe.as_ref().expect("safe_race");
+        let owner = state.piece(mover).owner;
+        let h = &state.heights;
+        let mut mask = 0u128;
+        for s in 0..SQUARES as u8 {
+            if state.at(s).is_some_and(|i| state.piece(i).owner == owner) {
+                continue; // case occupée par un allié : on ne s'y arrête pas
+            }
+            let (mut defense, mut support) = (3i32, 0i32);
+            for &nb in neighbors_of(s) {
+                if let Some(i) = state.at(nb).filter(|&i| i != mover) {
+                    let q = state.piece(i);
+                    if q.owner == owner {
+                        defense += 1;
+                    } else {
+                        support += q.kind.strength() as i32;
+                    }
+                }
+            }
+            let (sx, sy) = ((s as usize % SIZE) as i32, (s as usize / SIZE) as i32);
+            for (qi, q) in state.pieces().iter().enumerate() {
+                if q.owner == owner || state.at(s) == Some(qi as u8) {
+                    continue;
+                }
+                let k = q.kind.strength() as usize - 1;
+                let d = tables.walk[k][q.sq as usize][s as usize];
+                let special = q.kind == Kind::Explorer && {
+                    let (qx, qy) = ((q.sq as usize % SIZE) as i32, (q.sq as usize / SIZE) as i32);
+                    let (dx, dy) = ((qx - sx).abs(), (qy - sy).abs());
+                    (dx == 1 && dy == 1) || (dx + dy == 2 && (dx == 0 || dy == 0))
+                };
+                if d == u8::MAX && !special {
+                    continue;
+                }
+                let adjacent = neighbors_of(s).contains(&q.sq);
+                let height = (h[q.sq as usize] > h[s as usize]) as i32
+                    - (h[q.sq as usize] < h[s as usize]) as i32;
+                let charge = (q.kind == Kind::Vanguard && d == 4) as i32;
+                // Les voisines adverses soutiennent ; l'attaquant lui-même, s'il est voisin, ne se compte pas.
+                let attack = q.kind.strength() as i32 + height + charge + support
+                    - if adjacent {
+                        q.kind.strength() as i32
+                    } else {
+                        0
+                    };
+                if attack >= defense {
+                    mask |= 1 << s;
+                    break;
+                }
+            }
+        }
+        mask
+    }
+
+    /// Tours pour qu'une Sentinelle sorte en ne s'arrêtant que sur des cases sûres (`danger` :
+    /// cases à éviter). Relief seul pour la marche ; on ne s'arrête ni sur un allié ni sur une
+    /// Sentinelle adverse (une autre pièce adverse peut être prise). 15 : pas de chemin sûr.
+    fn safe_turns(&self, state: &State, p: &Piece, danger: u128) -> i32 {
+        let tables = self.safe.as_ref().expect("safe_race");
+        let exit = tables.exit[p.owner as usize - 1];
+        let mut blocked = danger;
+        for q in state.pieces() {
+            if q.owner == p.owner || q.kind == Kind::Sentinel {
+                blocked |= 1 << q.sq;
+            }
+        }
+        let mut frontier = 1u128 << p.sq;
+        let mut seen = frontier;
+        for t in 1..15 {
+            if frontier & exit != 0 {
+                return t;
+            }
+            let mut next = 0u128;
+            let mut f = frontier;
+            while f != 0 {
+                let s = f.trailing_zeros() as usize;
+                f &= f - 1;
+                next |= tables.turn[s];
+            }
+            next &= !seen & !blocked;
+            if next == 0 {
+                return 15;
+            }
+            seen |= next;
+            frontier = next;
+        }
+        15
     }
 
     /// Défense d'une pièce (R7.4) : sa Force + 1 par allié voisin.
     fn defense(state: &State, p: &Piece) -> i32 {
         let allies = neighbors_of(p.sq)
             .iter()
-            .filter(|&&nb| state.at(nb).is_some_and(|j| state.piece(j).owner == p.owner))
+            .filter(|&&nb| {
+                state
+                    .at(nb)
+                    .is_some_and(|j| state.piece(j).owner == p.owner)
+            })
             .count();
         p.kind.strength() as i32 + allies as i32
     }
@@ -463,7 +686,12 @@ impl Eval {
     fn blocked_costs(&self, state: &State, owner: u8) -> [u16; SQUARES] {
         let w = &self.w;
         let row = if owner == 1 { SIZE - 1 } else { 0 };
-        let other = |sq: u8| state.at(sq).map(|i| state.piece(i)).filter(|p| p.owner != owner);
+        let other = |sq: u8| {
+            state
+                .at(sq)
+                .map(|i| state.piece(i))
+                .filter(|p| p.owner != owner)
+        };
         let mut walls = [false; SQUARES];
         for p in state.pieces().iter().filter(|p| p.owner != owner) {
             walls[p.sq as usize] = w.soft == 0
@@ -566,7 +794,8 @@ impl Eval {
         let blocked = [self.blocked_costs(state, 1), self.blocked_costs(state, 2)];
         for (i, p) in state.pieces().iter().enumerate() {
             let free = self.cost(p.owner, p.sq);
-            let with = (blocked[p.owner as usize - 1][p.sq as usize] as i32).min(free + w.detour as i32);
+            let with =
+                (blocked[p.owner as usize - 1][p.sq as usize] as i32).min(free + w.detour as i32);
             let cost = (free * (100 - w.blend) + with * w.blend + 50) / 100;
             out[i] = match &self.exact {
                 None => Eval::turns_for(cost, p.kind),
@@ -602,7 +831,8 @@ impl Eval {
             let mover = state.to_move;
             let turns = self.piece_turns(state); // calculé une seule fois pour les deux
             let (sparse, dense) = crate::nn::features_with(self, state, &turns);
-            let correction = crate::nn::net().logit(&sparse, &dense).clamp(-30.0, 30.0) * self.w.nn_resid as f32;
+            let correction =
+                crate::nn::net().logit(&sparse, &dense).clamp(-30.0, 30.0) * self.w.nn_resid as f32;
             let v = self.evaluate_base_with(state, mover, turns) + correction as i32;
             return if side == mover { v } else { -v };
         }
@@ -615,20 +845,30 @@ impl Eval {
     }
 
     /// `evaluate_base` avec les tours de sortie par pièce déjà calculés.
-    fn evaluate_base_with(&self, state: &State, side: u8, turns: [i32; MAX_PIECES]) -> i32 {
+    fn evaluate_base_with(&self, state: &State, side: u8, mut turns: [i32; MAX_PIECES]) -> i32 {
+        if self.safe.is_some() {
+            // Une Sentinelle ne compte que ses tours SÛRS (jamais moins que sa distance brute).
+            for (i, p) in state.pieces().iter().enumerate() {
+                if p.kind == Kind::Sentinel {
+                    let safe = self.safe_turns(state, p, self.danger(state, i as u8));
+                    turns[i] = turns[i].max(safe.min(turns[i] + self.w.safe_race));
+                }
+            }
+        }
         let w = &self.w;
         let nobody_out = state.finished == 0;
         let other = if side == 1 { 2 } else { 1 };
         // Avec la course à la sortie, les points marqués (après une première sortie) ne valent
         // que par la course qu'ils ouvrent : l'écart de points brut n'est plus compté.
         let mut total = if w.exit_race == 0 {
-            w.score * (state.scores[side as usize - 1] as i32 - state.scores[other as usize - 1] as i32)
+            w.score
+                * (state.scores[side as usize - 1] as i32 - state.scores[other as usize - 1] as i32)
         } else {
             0
         };
         let mut first = [i32::MAX; 2]; // pièce la plus rapide de chaque camp
         let mut sentinel = [i32::MAX; 2]; // Sentinelle la plus rapide de chaque camp
-        // Tours de la pièce la plus rapide de chaque camp, par Force (indices 1 à 3).
+                                          // Tours de la pièce la plus rapide de chaque camp, par Force (indices 1 à 3).
         let mut fastest = [[i32::MAX; 4]; 2];
         // Tours des deux pièces les plus rapides de chaque camp, toutes Forces confondues.
         let mut two = [[i32::MAX; 2]; 2];
@@ -674,10 +914,15 @@ impl Eval {
         if let Some(reach) = &self.reach {
             let pieces = state.pieces();
             for (i, p) in pieces.iter().enumerate() {
-                let reaches = |q: &Piece| reach[q.kind.strength() as usize - 1][q.sq as usize] >> p.sq & 1 == 1;
+                let reaches = |q: &Piece| {
+                    reach[q.kind.strength() as usize - 1][q.sq as usize] >> p.sq & 1 == 1
+                };
                 let strength = p.kind.strength() as i32;
                 let v = if w.cover_cap == 0 {
-                    let covered = pieces.iter().enumerate().any(|(j, q)| j != i && q.owner == p.owner && reaches(q));
+                    let covered = pieces
+                        .iter()
+                        .enumerate()
+                        .any(|(j, q)| j != i && q.owner == p.owner && reaches(q));
                     if covered {
                         w.cover * strength
                     } else {
@@ -690,11 +935,14 @@ impl Eval {
                         .enumerate()
                         .filter(|&(j, q)| j != i && q.owner == p.owner && reaches(q))
                         .map(|(j, q)| {
-                            let (hq, hs) = (state.heights[q.sq as usize], state.heights[p.sq as usize]);
+                            let (hq, hs) =
+                                (state.heights[q.sq as usize], state.heights[p.sq as usize]);
                             let height = (hq > hs) as i32 - (hq < hs) as i32;
                             let support: i32 = neighbors_of(p.sq)
                                 .iter()
-                                .filter_map(|&nb| state.at(nb).map(|k| (k as usize, state.piece(k))))
+                                .filter_map(|&nb| {
+                                    state.at(nb).map(|k| (k as usize, state.piece(k)))
+                                })
                                 .filter(|&(k, r)| k != j && k != i && r.owner == p.owner)
                                 .map(|(_, r)| r.kind.strength() as i32)
                                 .sum();
@@ -723,7 +971,9 @@ impl Eval {
             let threatened = state
                 .pieces()
                 .iter()
-                .filter(|p| p.owner == mover && p.kind == Kind::Sentinel && self.capturable(state, **p))
+                .filter(|p| {
+                    p.owner == mover && p.kind == Kind::Sentinel && self.capturable(state, **p)
+                })
                 .count() as i32;
             let v = w.sentinel_threat * threatened;
             total += if mover == side { -v } else { v };
@@ -797,7 +1047,13 @@ impl Eval {
     /// s'arrête au score, 3 contre 1 ou 2 (R8.1). Une pièce bouge par tour : deux sorties
     /// coûtent la SOMME des tours des deux pièces. Chaque camp a sa chance ; la valeur est
     /// l'écart des deux.
-    fn start_race(&self, state: &State, side: u8, fastest: &[[i32; 4]; 2], two: &[[i32; 2]; 2]) -> i32 {
+    fn start_race(
+        &self,
+        state: &State,
+        side: u8,
+        fastest: &[[i32; 4]; 2],
+        two: &[[i32; 2]; 2],
+    ) -> i32 {
         let other = if side == 1 { 2 } else { 1 };
         let chance = |me: u8| {
             let them = if me == 1 { 2 } else { 1 };
@@ -816,19 +1072,33 @@ impl Eval {
     /// de Force > `a` avant lui (= `a` : nulle). C'est la règle « ne pas sortir sans plan » :
     /// une sortie qui ouvre une course perdue est notée comme telle, et la recherche l'évite.
     fn exit_race(&self, state: &State, side: u8, fastest: &[[i32; 4]; 2]) -> i32 {
-        let any = |o: u8| fastest[o as usize - 1][1..].iter().copied().min().unwrap_or(i32::MAX);
+        let any = |o: u8| {
+            fastest[o as usize - 1][1..]
+                .iter()
+                .copied()
+                .min()
+                .unwrap_or(i32::MAX)
+        };
         let race = self.w.exit_race;
-        let leader: u8 = if state.scores[0] > state.scores[1] { 1 } else { 2 };
+        let leader: u8 = if state.scores[0] > state.scores[1] {
+            1
+        } else {
+            2
+        };
         let trailer = if leader == 1 { 2 } else { 1 };
         let lead = state.scores[leader as usize - 1] as usize;
         // La limite de coups départage au score : elle vaut une sortie du camp en tête.
         let remaining = state.move_limit as i32 - state.ply as i32 + 1;
         let lead_time = Eval::plies(state, leader, any(leader)).min(remaining);
         let t = &fastest[trailer as usize - 1];
-        let stronger = t.get(lead + 1..).and_then(|s| s.iter().copied().min()).unwrap_or(i32::MAX);
+        let stronger = t
+            .get(lead + 1..)
+            .and_then(|s| s.iter().copied().min())
+            .unwrap_or(i32::MAX);
         let equal = t.get(lead).copied().unwrap_or(i32::MAX);
         let lose = self.first_chance(Eval::plies(state, trailer, stronger), lead_time);
-        let draw = (1000 - lose) * self.first_chance(Eval::plies(state, trailer, equal), lead_time) / 1000;
+        let draw =
+            (1000 - lose) * self.first_chance(Eval::plies(state, trailer, equal), lead_time) / 1000;
         let v = race * (1000 - lose - draw - lose) / 1000;
         if side == leader {
             v
@@ -850,7 +1120,8 @@ impl Eval {
         let wins = |me: u8| {
             let them = if me == 1 { 2 } else { 1 };
             let mine = plies(me, sentinel[me as usize - 1]);
-            mine < plies(them, first[them as usize - 1]) && sentinel[me as usize - 1] <= self.w.sentinel_race_horizon
+            mine < plies(them, first[them as usize - 1])
+                && sentinel[me as usize - 1] <= self.w.sentinel_race_horizon
         };
         let other = if side == 1 { 2 } else { 1 };
         match (wins(side), wins(other)) {
@@ -888,7 +1159,12 @@ mod tests {
             let mut s = new_game(heights);
             while !s.over {
                 for side in [1, 2] {
-                    assert_eq!(ours.evaluate(&s, side), sdk.evaluate(&s, side), "ply {} côté {side}", s.ply);
+                    assert_eq!(
+                        ours.evaluate(&s, side),
+                        sdk.evaluate(&s, side),
+                        "ply {} côté {side}",
+                        s.ply
+                    );
                     checked += 1;
                     after_exit += (s.finished > 0) as usize;
                 }
@@ -898,7 +1174,10 @@ mod tests {
             assert_eq!(ours.evaluate(&s, 1), sdk.evaluate(&s, 1));
         }
         assert!(checked > 10_000, "{checked} positions seulement");
-        assert!(after_exit > 100, "{after_exit} positions après une sortie seulement");
+        assert!(
+            after_exit > 100,
+            "{after_exit} positions après une sortie seulement"
+        );
         eprintln!("{checked} positions comparées, dont {after_exit} après une sortie");
     }
 }
@@ -932,7 +1211,11 @@ mod race_tests {
     /// Rouge au trait. Explorateur rouge sur la rangée de sortie (1 tour), Sentinelle rouge
     /// rangée 5 (coût 5 : 2 tours), Sentinelle bleue rangée 4 (coût 5 : 2 tours).
     fn exit_without_plan() -> State {
-        let pieces = [piece(1, Kind::Explorer, 92), piece(1, Kind::Sentinel, 57), piece(2, Kind::Sentinel, 42)];
+        let pieces = [
+            piece(1, Kind::Explorer, 92),
+            piece(1, Kind::Sentinel, 57),
+            piece(2, Kind::Sentinel, 42),
+        ];
         State::new(FLAT, &pieces, 1, 20, [0, 0], 0, 200)
     }
 
@@ -946,9 +1229,16 @@ mod race_tests {
         // Sortir l'Explorateur ouvre la course au score : Bleu (au trait) sort sa Sentinelle,
         // F3 > F1, avant la deuxième sortie rouge. Course perdue pour Rouge (d'un demi-coup :
         // l'ampleur dépend de `race_spread`).
-        let exit = legal_moves(&s).into_iter().find(|m| m.kind == MoveKind::Exit).expect("sortie");
+        let exit = legal_moves(&s)
+            .into_iter()
+            .find(|m| m.kind == MoveKind::Exit)
+            .expect("sortie");
         let after = apply_move(&s, &exit);
-        assert!(e.evaluate(&after, 1) < 0, "après : {}", e.evaluate(&after, 1));
+        assert!(
+            e.evaluate(&after, 1) < 0,
+            "après : {}",
+            e.evaluate(&after, 1)
+        );
         assert_eq!(e.evaluate(&after, 2), -e.evaluate(&after, 1));
     }
 
@@ -957,8 +1247,16 @@ mod race_tests {
         let s = exit_without_plan();
         let moves = legal_moves(&s);
         let never = || false;
-        let pick = Piolet::new(Config { max_depth: 4, ..Config::default() }).choose(&s, &moves, never);
-        assert_ne!(moves[pick.index].kind, MoveKind::Exit, "Piolet sort sans plan");
+        let pick = Piolet::new(Config {
+            max_depth: 4,
+            ..Config::default()
+        })
+        .choose(&s, &moves, never);
+        assert_ne!(
+            moves[pick.index].kind,
+            MoveKind::Exit,
+            "Piolet sort sans plan"
+        );
     }
 
     #[test]
@@ -966,18 +1264,32 @@ mod race_tests {
         // Personne n'est sorti. Sentinelle rouge à 2 tours ; Bleu n'a qu'un Explorateur à
         // 1 tour et une Sentinelle lointaine. Si Bleu sort l'Explorateur, la Sentinelle rouge
         // sort ensuite et gagne 3 à 1 : la course est rouge (le SDK la jugeait annulée).
-        let pieces = [piece(1, Kind::Sentinel, 57), piece(2, Kind::Explorer, 3), piece(2, Kind::Sentinel, 82)];
+        let pieces = [
+            piece(1, Kind::Sentinel, 57),
+            piece(2, Kind::Explorer, 3),
+            piece(2, Kind::Sentinel, 82),
+        ];
         let s = State::new(FLAT, &pieces, 1, 20, [0, 0], 0, 200);
         let e = Eval::new(&s.heights, race_only());
         assert!(e.evaluate(&s, 1) >= 300, "{}", e.evaluate(&s, 1));
         // Même avec deux Explorateurs bleus à 1 tour : Bleu sort aux demi-coups 2 et 4, la
         // Sentinelle rouge au 3, entre les deux. Rouge gagne encore 3 à 1.
-        let pieces = [piece(1, Kind::Sentinel, 57), piece(2, Kind::Explorer, 3), piece(2, Kind::Explorer, 4), piece(2, Kind::Sentinel, 82)];
+        let pieces = [
+            piece(1, Kind::Sentinel, 57),
+            piece(2, Kind::Explorer, 3),
+            piece(2, Kind::Explorer, 4),
+            piece(2, Kind::Sentinel, 82),
+        ];
         let s = State::new(FLAT, &pieces, 1, 20, [0, 0], 0, 200);
         assert!(e.evaluate(&s, 1) > 0, "{}", e.evaluate(&s, 1));
         // Sentinelle rouge rangée 3 (3 tours, demi-coup 5) : les deux sorties bleues passent
         // avant, la course n'est plus rouge.
-        let pieces = [piece(1, Kind::Sentinel, 37), piece(2, Kind::Explorer, 3), piece(2, Kind::Explorer, 4), piece(2, Kind::Sentinel, 82)];
+        let pieces = [
+            piece(1, Kind::Sentinel, 37),
+            piece(2, Kind::Explorer, 3),
+            piece(2, Kind::Explorer, 4),
+            piece(2, Kind::Sentinel, 82),
+        ];
         let s = State::new(FLAT, &pieces, 1, 20, [0, 0], 0, 200);
         assert!(e.evaluate(&s, 1) <= 0, "{}", e.evaluate(&s, 1));
     }
@@ -986,7 +1298,11 @@ mod race_tests {
     fn leader_wins_the_race_when_trailer_has_nothing_stronger() {
         // Rouge a sorti une Avant-garde (2 points) ; Bleu n'a plus que des Explorateurs : il
         // ne peut plus que perdre, même en sortant le premier.
-        let pieces = [piece(1, Kind::Explorer, 12), piece(2, Kind::Explorer, 5), piece(2, Kind::Explorer, 6)];
+        let pieces = [
+            piece(1, Kind::Explorer, 12),
+            piece(2, Kind::Explorer, 5),
+            piece(2, Kind::Explorer, 6),
+        ];
         let s = State::new(FLAT, &pieces, 2, 40, [2, 0], 1, 200);
         let e = Eval::new(&s.heights, race_only());
         assert_eq!(e.evaluate(&s, 1), 400);
@@ -1016,6 +1332,63 @@ mod sentinel_tests {
         }
     }
 
+    /// Une Avant-garde seule (Force 2) ne prend une Sentinelle (défense 3) qu'avec la charge :
+    /// les cases dangereuses sont exactement celles à coût de marche 4 d'elle.
+    #[test]
+    fn a_lone_vanguard_threatens_its_charge_ring() {
+        let s = State::new(
+            FLAT,
+            &[piece(1, Kind::Sentinel, 11), piece(2, Kind::Vanguard, 55)],
+            1,
+            20,
+            [0, 0],
+            0,
+            200,
+        );
+        let e = Eval::new(
+            &FLAT,
+            Weights {
+                safe_race: 1,
+                ..nothing()
+            },
+        );
+        let ring = walk(&FLAT, 55, 4);
+        let expected = (0..SQUARES)
+            .filter(|&q| ring[q] == 4)
+            .fold(0u128, |m, q| m | 1 << q);
+        assert_eq!(e.danger(&s, 0), expected);
+    }
+
+    /// Sans adversaire, la distance sûre est la distance brute ; une Avant-garde bien placée sur la
+    /// route l'allonge d'au moins un tour pour une position de départ.
+    #[test]
+    fn a_vanguard_on_the_route_costs_a_turn() {
+        let e = Eval::new(
+            &FLAT,
+            Weights {
+                safe_race: 1,
+                ..nothing()
+            },
+        );
+        let raw = exact_turns(&FLAT, 1, Kind::Sentinel);
+        let alone = State::new(FLAT, &[piece(1, Kind::Sentinel, 44)], 1, 20, [0, 0], 0, 200);
+        let base = e.safe_turns(&alone, &alone.pieces()[0], e.danger(&alone, 0));
+        assert_eq!(base, raw[44] as i32);
+        let longer = (0..SQUARES as u8).filter(|&v| v != 44).any(|v| {
+            let s = State::new(
+                FLAT,
+                &[piece(1, Kind::Sentinel, 44), piece(2, Kind::Vanguard, v)],
+                1,
+                20,
+                [0, 0],
+                0,
+                200,
+            );
+            e.safe_turns(&s, &s.pieces()[0], e.danger(&s, 0)) > base
+        });
+        assert!(longer);
+    }
+
     #[test]
     fn a_defended_line_is_a_wall_for_the_enemy_sentinel() {
         // Rangée 3 rouge : E V V S E (colonnes 3 à 7). Les deux Avant-gardes ont 2 alliés
@@ -1030,7 +1403,14 @@ mod sentinel_tests {
         ];
         let s = State::new(FLAT, &pieces, 2, 20, [0, 0], 0, 200);
         let open = Eval::new(&FLAT, nothing()).blocked_costs(&s, 2)[45];
-        let trap = Eval::new(&FLAT, Weights { wall_defense: 4, ..nothing() }).blocked_costs(&s, 2)[45];
+        let trap = Eval::new(
+            &FLAT,
+            Weights {
+                wall_defense: 4,
+                ..nothing()
+            },
+        )
+        .blocked_costs(&s, 2)[45];
         // Sans piège : à travers l'Avant-garde (5 + 2 pour l'abattre). Avec : détour par la
         // colonne 2 (8).
         assert_eq!((open, trap), (7, 8));
@@ -1038,7 +1418,10 @@ mod sentinel_tests {
 
     #[test]
     fn a_threatened_sentinel_costs_the_side_to_move() {
-        let w = Weights { sentinel_threat: 100, ..nothing() };
+        let w = Weights {
+            sentinel_threat: 100,
+            ..nothing()
+        };
         let e = Eval::new(&FLAT, w);
         // Sentinelle bleue au contact de la rouge : attaque 3 contre défense 3, elle passe.
         let pieces = [piece(1, Kind::Sentinel, 55), piece(2, Kind::Sentinel, 56)];
@@ -1053,7 +1436,11 @@ mod sentinel_tests {
         // Escortée par une Avant-garde au contact (65, voisins orthogonaux seulement) :
         // défense 4, la Sentinelle rouge ne craint plus rien ; la bleue, seule, reste à la
         // merci de la rouge (3 contre 3).
-        let pieces = [piece(1, Kind::Sentinel, 55), piece(1, Kind::Vanguard, 65), piece(2, Kind::Sentinel, 56)];
+        let pieces = [
+            piece(1, Kind::Sentinel, 55),
+            piece(1, Kind::Vanguard, 65),
+            piece(2, Kind::Sentinel, 56),
+        ];
         let red = State::new(FLAT, &pieces, 1, 20, [0, 0], 0, 200);
         assert!(!e.capturable(&red, red.pieces()[0]));
         assert!(e.capturable(&red, red.pieces()[2]));
@@ -1073,7 +1460,13 @@ mod sentinel_tests {
         let pieces = [piece(1, Kind::Sentinel, 59), piece(2, Kind::Sentinel, 55)];
         let s = State::new(FLAT, &pieces, 1, 20, [0, 0], 0, 200);
         let moves = legal_moves(&s);
-        let to = |sq: u8| moves.iter().find(|m| m.kind == MoveKind::Move && m.to == sq).copied().expect("coup");
+        let to = |sq: u8| {
+            moves
+                .iter()
+                .find(|m| m.kind == MoveKind::Move && m.to == sq)
+                .copied()
+                .expect("coup")
+        };
         assert!(!e.capturable(&s, s.pieces()[1]));
         assert!(e.hunts(&s, &to(56)));
         assert!(!e.hunts(&s, &to(69)));
@@ -1081,7 +1474,13 @@ mod sentinel_tests {
 
     #[test]
     fn tempo_race_counts_every_half_move() {
-        let e = Eval::new(&FLAT, Weights { tempo_race: 10, ..nothing() });
+        let e = Eval::new(
+            &FLAT,
+            Weights {
+                tempo_race: 10,
+                ..nothing()
+            },
+        );
         // Sentinelle rouge rangée 5 (coût 5 : 2 tours), bleue rangée 4 (coût 5 : 2 tours).
         // Rouge au trait : 3 demi-coups contre 4, +1 pour Rouge.
         let pieces = [piece(1, Kind::Sentinel, 57), piece(2, Kind::Sentinel, 42)];
@@ -1096,7 +1495,13 @@ mod sentinel_tests {
 
     #[test]
     fn cover_values_pieces_an_ally_can_recapture() {
-        let e = Eval::new(&FLAT, Weights { cover: 10, ..nothing() });
+        let e = Eval::new(
+            &FLAT,
+            Weights {
+                cover: 10,
+                ..nothing()
+            },
+        );
         // Explorateur rouge en 44, Sentinelle rouge en 55 : diagonale, l'Explorateur couvre la
         // Sentinelle (+30) ; la Sentinelle couvre l'Explorateur (2 de marche ≤ 3 : +10).
         let pieces = [piece(1, Kind::Explorer, 44), piece(1, Kind::Sentinel, 55)];
@@ -1114,7 +1519,14 @@ mod sentinel_tests {
 
     #[test]
     fn cover_power_counts_the_recapture_strength() {
-        let e = Eval::new(&FLAT, Weights { cover: 30, cover_cap: 3, ..nothing() });
+        let e = Eval::new(
+            &FLAT,
+            Weights {
+                cover: 30,
+                cover_cap: 3,
+                ..nothing()
+            },
+        );
         // Sentinelle rouge en 55, couverte par un Explorateur seul (44, diagonale) : puissance
         // 1 -> 30 × 3 × 1/3 = 30. L'Explorateur, couvert par la Sentinelle (puissance 3, plafond) :
         // 30 × 1 × 3/3 = 30.
@@ -1125,7 +1537,11 @@ mod sentinel_tests {
         // 1 + 2 = 3 (plafond) -> 90 pour la Sentinelle. L'Avant-garde est couverte par la
         // Sentinelle (3 + 0 : le seul autre voisin de 56 est la Sentinelle elle-même) -> 60 ;
         // l'Explorateur, par la Sentinelle (3) et l'Avant-garde (2 + 0) -> 30.
-        let pieces = [piece(1, Kind::Explorer, 44), piece(1, Kind::Sentinel, 55), piece(1, Kind::Vanguard, 56)];
+        let pieces = [
+            piece(1, Kind::Explorer, 44),
+            piece(1, Kind::Sentinel, 55),
+            piece(1, Kind::Vanguard, 56),
+        ];
         let s = State::new(FLAT, &pieces, 1, 20, [0, 0], 0, 200);
         assert_eq!(e.evaluate(&s, 1), 90 + 60 + 30);
     }
@@ -1134,7 +1550,10 @@ mod sentinel_tests {
     fn weights_by_name() {
         let mut w = Weights::default();
         w.apply("value_e=20, progress_s=11,tempo_race=30").unwrap();
-        assert_eq!((w.value, w.progress[2], w.tempo_race), ([20, 28, 42], 11, 30));
+        assert_eq!(
+            (w.value, w.progress[2], w.tempo_race),
+            ([20, 28, 42], 11, 30)
+        );
         assert_eq!(w.get("value_e"), Some(20));
         assert!(w.apply("inconnu=1").is_err());
         assert!(w.apply("value_e").is_err());
@@ -1146,7 +1565,13 @@ mod sentinel_tests {
     #[test]
     fn nn_evaluation_is_antisymmetric() {
         let heights = crate::boards()[5];
-        let e = Eval::new(&heights, Weights { nn: 270, ..Weights::default() });
+        let e = Eval::new(
+            &heights,
+            Weights {
+                nn: 270,
+                ..Weights::default()
+            },
+        );
         let mut s = traversal_bot::core::new_game(heights);
         for _ in 0..12 {
             let v = e.evaluate(&s, s.to_move);
@@ -1159,7 +1584,13 @@ mod sentinel_tests {
     #[test]
     fn nn_correction_is_antisymmetric_and_bounded() {
         let heights = crate::boards()[5];
-        let e = Eval::new(&heights, Weights { nn_resid: 270, ..Weights::default() });
+        let e = Eval::new(
+            &heights,
+            Weights {
+                nn_resid: 270,
+                ..Weights::default()
+            },
+        );
         let base = Eval::new(&heights, Weights::default());
         let mut s = traversal_bot::core::new_game(heights);
         for _ in 0..12 {
@@ -1175,7 +1606,11 @@ mod sentinel_tests {
     fn guard_squares_follow_the_enemy_sentinel_shortest_path() {
         // Sur le plat, la Sentinelle bleue en 45 descend tout droit : 35, 25, 15, 5. Elle est
         // préférée à l'Explorateur bleu, pourtant plus rapide.
-        let pieces = [piece(1, Kind::Vanguard, 90), piece(2, Kind::Sentinel, 45), piece(2, Kind::Explorer, 18)];
+        let pieces = [
+            piece(1, Kind::Vanguard, 90),
+            piece(2, Kind::Sentinel, 45),
+            piece(2, Kind::Explorer, 18),
+        ];
         let s = State::new(FLAT, &pieces, 1, 20, [0, 0], 0, 200);
         let g = Eval::new(&FLAT, Weights::default()).guard_squares(&s, 2);
         let on: Vec<usize> = (0..SQUARES).filter(|&q| g[q]).collect();
@@ -1184,7 +1619,10 @@ mod sentinel_tests {
 
     #[test]
     fn pressure_on_the_enemy_sentinel_counts_up_to_its_defense() {
-        let w = Weights { sentinel_pressure: 10, ..nothing() };
+        let w = Weights {
+            sentinel_pressure: 10,
+            ..nothing()
+        };
         let e = Eval::new(&FLAT, w);
         // Avant-garde rouge au contact de la Sentinelle bleue : 2 points de pression.
         let pieces = [piece(1, Kind::Vanguard, 54), piece(2, Kind::Sentinel, 55)];
@@ -1192,7 +1630,11 @@ mod sentinel_tests {
         assert_eq!(e.evaluate(&s, 1), 20);
         assert_eq!(e.evaluate(&s, 2), -20);
         // Deux Avant-gardes : 4, plafonné à la défense de la Sentinelle (3).
-        let pieces = [piece(1, Kind::Vanguard, 54), piece(1, Kind::Vanguard, 56), piece(2, Kind::Sentinel, 55)];
+        let pieces = [
+            piece(1, Kind::Vanguard, 54),
+            piece(1, Kind::Vanguard, 56),
+            piece(2, Kind::Sentinel, 55),
+        ];
         let s = State::new(FLAT, &pieces, 1, 20, [0, 0], 0, 200);
         assert_eq!(e.evaluate(&s, 1), 30);
     }
@@ -1215,7 +1657,10 @@ mod distance_tests {
                 for kind in [Kind::Vanguard, Kind::Sentinel] {
                     let exact = exact_turns(&heights, owner, kind);
                     for sq in 0..SQUARES {
-                        assert!(exact[sq] as i32 >= Eval::turns_for(cost[sq] as i32, kind), "case {sq}");
+                        assert!(
+                            exact[sq] as i32 >= Eval::turns_for(cost[sq] as i32, kind),
+                            "case {sq}"
+                        );
                     }
                 }
             }
@@ -1225,7 +1670,11 @@ mod distance_tests {
             let exact = exact_turns(&flat, 1, kind);
             let cost = exit_costs(&flat, 1);
             for sq in 0..SQUARES {
-                assert_eq!(exact[sq] as i32, Eval::turns_for(cost[sq] as i32, kind), "{kind:?} case {sq}");
+                assert_eq!(
+                    exact[sq] as i32,
+                    Eval::turns_for(cost[sq] as i32, kind),
+                    "{kind:?} case {sq}"
+                );
             }
         }
     }
@@ -1248,7 +1697,19 @@ mod distance_tests {
                             turns += 1;
                             let mut next = Vec::new();
                             for &from in &frontier {
-                                let s = State::new(heights, &[Piece { owner, kind, sq: from }], owner, 0, [0, 0], 0, 200);
+                                let s = State::new(
+                                    heights,
+                                    &[Piece {
+                                        owner,
+                                        kind,
+                                        sq: from,
+                                    }],
+                                    owner,
+                                    0,
+                                    [0, 0],
+                                    0,
+                                    200,
+                                );
                                 for m in legal_moves(&s) {
                                     if m.kind == MoveKind::Exit {
                                         break 'bfs turns;
@@ -1287,13 +1748,17 @@ mod distance_tests {
                     let exact = exact_turns(&heights, owner, kind);
                     let cost = exit_costs(&heights, owner);
                     for sq in 0..SQUARES {
-                        *hist.entry(exact[sq] as i32 - Eval::turns_for(cost[sq] as i32, kind)).or_default() += 1;
+                        *hist
+                            .entry(exact[sq] as i32 - Eval::turns_for(cost[sq] as i32, kind))
+                            .or_default() += 1;
                     }
                     // Cases de départ (colonnes 2 à 7 de la rangée de départ).
                     let row = if owner == 1 { 0 } else { SIZE - 1 };
                     for x in 2..8 {
                         let sq = row * SIZE + x;
-                        *start.entry(exact[sq] as i32 - Eval::turns_for(cost[sq] as i32, kind)).or_default() += 1;
+                        *start
+                            .entry(exact[sq] as i32 - Eval::turns_for(cost[sq] as i32, kind))
+                            .or_default() += 1;
                     }
                 }
             }

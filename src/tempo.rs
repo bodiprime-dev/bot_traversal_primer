@@ -19,9 +19,17 @@ pub const BLOCKED: u8 = 20;
 /// Tours pour que la pièce sur `sq` sorte, les autres pièces restant immobiles (`BLOCKED` si
 /// elle n'y arrive pas en moins de `BLOCKED` tours).
 pub fn sprint_turns(state: &State, sq: u8) -> u8 {
-    let Some(i) = state.at(sq) else { return BLOCKED };
+    let Some(i) = state.at(sq) else {
+        return BLOCKED;
+    };
     let runner = state.piece(i);
-    let others: Vec<Piece> = state.pieces().iter().enumerate().filter(|&(j, _)| j != i as usize).map(|(_, p)| *p).collect();
+    let others: Vec<Piece> = state
+        .pieces()
+        .iter()
+        .enumerate()
+        .filter(|&(j, _)| j != i as usize)
+        .map(|(_, p)| *p)
+        .collect();
     let mut seen = [false; SQUARES];
     seen[sq as usize] = true;
     let mut frontier = vec![sq];
@@ -32,7 +40,15 @@ pub fn sprint_turns(state: &State, sq: u8) -> u8 {
             // La pièce en `from` ; une pièce adverse déjà sur cette case a été capturée.
             let mut pieces: Vec<Piece> = others.iter().copied().filter(|p| p.sq != from).collect();
             pieces.push(Piece { sq: from, ..runner });
-            let s = State::new(state.heights, &pieces, runner.owner, state.ply, state.scores, state.finished, state.move_limit);
+            let s = State::new(
+                state.heights,
+                &pieces,
+                runner.owner,
+                state.ply,
+                state.scores,
+                state.finished,
+                state.move_limit,
+            );
             buf.clear();
             piece_moves(&s, (pieces.len() - 1) as u8, &mut buf);
             for m in &buf {
@@ -125,10 +141,17 @@ mod tests {
         // Une Avant-garde bleue en 85 se fait prendre (3 contre 2), mais une capture TERMINE le
         // déplacement : la Sentinelle sort au tour suivant (le détour coûte 4, trop cher).
         // Un temps perdu pour Rouge contre un coup joué par Bleu.
-        let pieces = [piece(1, Kind::Sentinel, 75), piece(2, Kind::Vanguard, 94), piece(2, Kind::Sentinel, 4)];
+        let pieces = [
+            piece(1, Kind::Sentinel, 75),
+            piece(2, Kind::Vanguard, 94),
+            piece(2, Kind::Sentinel, 4),
+        ];
         let s = State::new(FLAT, &pieces, 2, 20, [0, 0], 0, 200);
         assert_eq!(sprint_turns(&s, 75), 1);
-        let block = legal_moves(&s).into_iter().find(|m| m.kind == MoveKind::Move && m.to == 85).expect("coup");
+        let block = legal_moves(&s)
+            .into_iter()
+            .find(|m| m.kind == MoveKind::Move && m.to == 85)
+            .expect("coup");
         assert_eq!(tempo_balance(&s, &block), (1, 0));
     }
 }

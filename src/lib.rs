@@ -80,7 +80,10 @@ fn config() -> Config {
 }
 
 fn choose(turn: &Turn) -> usize {
-    RESERVE.store(turn.fuel - turn.fuel / 100 * SPEND_PERCENT, Ordering::Relaxed);
+    RESERVE.store(
+        turn.fuel - turn.fuel / 100 * SPEND_PERCENT,
+        Ordering::Relaxed,
+    );
     let pick = BOT.with(|b| {
         let mut b = b.borrow_mut();
         let bot = b.get_or_insert_with(|| Piolet::new(config()));

@@ -21,7 +21,9 @@ use piolet::boards;
 use piolet::eval::{Eval, Weights};
 use piolet::search::{Config, Piolet};
 use piolet::tempo::{best_sentinel, tempo_balance, BLOCKED};
-use traversal_bot::core::{apply_move, choose_move, legal_moves, new_game, Kind, Level, MoveKind, Rng};
+use traversal_bot::core::{
+    apply_move, choose_move, legal_moves, new_game, Kind, Level, MoveKind, Rng,
+};
 
 thread_local! {
     static CALLS_LEFT: Cell<u64> = const { Cell::new(0) };
@@ -103,23 +105,49 @@ fn play(board: usize, heights: [u8; 100], nodes: u64) -> Game {
             let mv = moves[bot.choose(&s, &moves, out_of_nodes).index];
             let red = best_sentinel(&s, 1).map_or(BLOCKED, |(_, t)| t);
             let blue = best_sentinel(&s, 2).map_or(BLOCKED, |(_, t)| t);
-            let best = moves.iter().filter(|m| m.kind != MoveKind::Pass).map(|m| net(tempo_balance(&s, m))).max().unwrap_or(0);
-            let played = if mv.kind == MoveKind::Pass { -1 } else { net(tempo_balance(&s, &mv)) };
-            let sentinel_move = mv.kind != MoveKind::Pass && s.piece(mv.piece).kind == Kind::Sentinel;
+            let best = moves
+                .iter()
+                .filter(|m| m.kind != MoveKind::Pass)
+                .map(|m| net(tempo_balance(&s, m)))
+                .max()
+                .unwrap_or(0);
+            let played = if mv.kind == MoveKind::Pass {
+                -1
+            } else {
+                net(tempo_balance(&s, &mv))
+            };
+            let sentinel_move =
+                mv.kind != MoveKind::Pass && s.piece(mv.piece).kind == Kind::Sentinel;
             let on_red_sentinel = |m: &traversal_bot::core::Move| {
-                m.kind == MoveKind::Attack && s.at(m.to).is_some_and(|j| s.piece(j).kind == Kind::Sentinel)
+                m.kind == MoveKind::Attack
+                    && s.at(m.to)
+                        .is_some_and(|j| s.piece(j).kind == Kind::Sentinel)
             };
             let capture = (moves.iter().any(on_red_sentinel), on_red_sentinel(&mv));
             let advances: Vec<_> = moves
                 .iter()
-                .filter(|m| matches!(m.kind, MoveKind::Move | MoveKind::Attack) && s.piece(m.piece).kind == Kind::Sentinel)
+                .filter(|m| {
+                    matches!(m.kind, MoveKind::Move | MoveKind::Attack)
+                        && s.piece(m.piece).kind == Kind::Sentinel
+                })
                 .filter(|m| tempo_balance(&s, m).1 >= 1)
                 .collect();
             let safe_advance = advances.iter().any(|m| {
                 let child = apply_move(&s, m);
-                child.at(m.to).is_some_and(|j| !eval.capturable(&child, child.piece(j)))
+                child
+                    .at(m.to)
+                    .is_some_and(|j| !eval.capturable(&child, child.piece(j)))
             });
-            turns.push(Turn { red, blue, best, played, sentinel_move, capture, advance: !advances.is_empty(), safe_advance });
+            turns.push(Turn {
+                red,
+                blue,
+                best,
+                played,
+                sentinel_move,
+                capture,
+                advance: !advances.is_empty(),
+                safe_advance,
+            });
             mv
         } else {
             red_moves += 1;
@@ -132,11 +160,21 @@ fn play(board: usize, heights: [u8; 100], nodes: u64) -> Game {
         Some(2) => 1,
         Some(_) => -1,
     };
-    Game { board, result, reason: s.reason.map_or("?", |r| r.name()), turns, red_start, red_moves }
+    Game {
+        board,
+        result,
+        reason: s.reason.map_or("?", |r| r.name()),
+        turns,
+        red_start,
+        red_moves,
+    }
 }
 
 fn arg(args: &[String], name: &str, default: u64) -> u64 {
-    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).map_or(default, |v| v.parse().expect("nombre"))
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|i| args.get(i + 1))
+        .map_or(default, |v| v.parse().expect("nombre"))
 }
 
 fn mean(v: &[f64]) -> f64 {
@@ -170,18 +208,34 @@ fn main() {
     let mut all = done.into_inner().unwrap();
     all.sort_by_key(|g| g.board);
 
-    let lost: Vec<&Game> = all.iter().filter(|g| g.result == -1 && g.reason == "sentinel").collect();
+    let lost: Vec<&Game> = all
+        .iter()
+        .filter(|g| g.result == -1 && g.reason == "sentinel")
+        .collect();
     let won: Vec<&Game> = all.iter().filter(|g| g.result == 1).collect();
     println!("Piolet en Bleu contre Mont Blanc : {} parties, {} gagnées, {} perdues sur la Sentinelle rouge", all.len(), won.len(), lost.len());
 
     for (name, set) in [("perdues (Sentinelle rouge)", &lost), ("gagnées", &won)] {
         println!("\n== Parties {name} ({})", set.len());
         // Rouge : tours au départ contre coups joués avant de sortir (gaspillage).
-        let waste: Vec<f64> = set.iter().map(|g| g.red_moves as f64 - g.red_start as f64).collect();
-        println!("  Rouge : {:.1} coups joués en plus du minimum de sa Sentinelle (moyenne)", mean(&waste));
+        let waste: Vec<f64> = set
+            .iter()
+            .map(|g| g.red_moves as f64 - g.red_start as f64)
+            .collect();
+        println!(
+            "  Rouge : {:.1} coups joués en plus du minimum de sa Sentinelle (moyenne)",
+            mean(&waste)
+        );
         // Course au premier tour de Bleu, et au moment où Bleu est passé derrière pour de bon.
-        let first_gap: Vec<f64> = set.iter().filter_map(|g| g.turns.first()).map(|t| t.blue as f64 - t.red as f64).collect();
-        println!("  Au départ : notre Sentinelle a {:+.2} tours de plus que la rouge (moyenne)", mean(&first_gap));
+        let first_gap: Vec<f64> = set
+            .iter()
+            .filter_map(|g| g.turns.first())
+            .map(|t| t.blue as f64 - t.red as f64)
+            .collect();
+        println!(
+            "  Au départ : notre Sentinelle a {:+.2} tours de plus que la rouge (moyenne)",
+            mean(&first_gap)
+        );
         // Coups « 2 contre 1 » : disponibles, joués.
         let turns: Vec<&Turn> = set.iter().flat_map(|g| g.turns.iter()).collect();
         let behind: Vec<&&Turn> = turns.iter().filter(|t| t.blue > t.red).collect();
@@ -202,7 +256,9 @@ fn main() {
         );
         let mut hist: BTreeMap<(i32, i32), usize> = BTreeMap::new();
         for t in &turns {
-            *hist.entry((t.best.min(3), t.played.clamp(-1, 3))).or_default() += 1;
+            *hist
+                .entry((t.best.min(3), t.played.clamp(-1, 3)))
+                .or_default() += 1;
         }
         println!("  (meilleur gain net dispo, gain net joué) -> tours : {hist:?}");
         let sentinel = turns.iter().filter(|t| t.sentinel_move).count();
@@ -224,7 +280,11 @@ fn main() {
     // Quelques parties perdues à examiner : la course tour par tour.
     println!("\n== Exemples (perdues) : tour de Bleu -> (rouge, bleu, meilleur net, net joué)");
     for g in lost.iter().take(6) {
-        let line: Vec<String> = g.turns.iter().map(|t| format!("({},{},{},{})", t.red, t.blue, t.best, t.played)).collect();
+        let line: Vec<String> = g
+            .turns
+            .iter()
+            .map(|t| format!("({},{},{},{})", t.red, t.blue, t.best, t.played))
+            .collect();
         println!("  carte {:>3} : {}", g.board, line.join(" "));
     }
 }

@@ -19,7 +19,9 @@ fn main() {
         let mut seed = b as u64 * 7919 + 1;
         for _ in 0..20 {
             let m = legal_moves(&s);
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             s = apply_move(&s, &m[(seed >> 33) as usize % m.len()]);
             if s.over {
                 break;
@@ -43,11 +45,27 @@ fn main() {
         println!("  {name:<38} {ns:>8.0} ns");
     };
     println!("{} positions × {reps}", states.len());
-    let evals: Vec<(Eval, Ctx)> = states.iter().map(|s| (Eval::new(&s.heights, Weights::default()), Ctx::with_insight(&s.heights, 3, Tuning::default()))).collect();
+    let evals: Vec<(Eval, Ctx)> = states
+        .iter()
+        .map(|s| {
+            (
+                Eval::new(&s.heights, Weights::default()),
+                Ctx::with_insight(&s.heights, 3, Tuning::default()),
+            )
+        })
+        .collect();
     let idx = |s: &State| states.iter().position(|x| std::ptr::eq(x, s)).unwrap();
-    time("évaluation (evaluate)", &|s| evals[idx(s)].0.evaluate(s, s.to_move) as u64);
-    time("coups légaux (legal_moves)", &|s| legal_moves(s).len() as u64);
-    time("coups triés (Ctx::ordered)", &|s| evals[idx(s)].1.ordered(s).len() as u64);
-    time("jouer un coup (apply_move)", &|s| apply_move(s, &legal_moves(s)[0]).ply as u64);
+    time("évaluation (evaluate)", &|s| {
+        evals[idx(s)].0.evaluate(s, s.to_move) as u64
+    });
+    time("coups légaux (legal_moves)", &|s| {
+        legal_moves(s).len() as u64
+    });
+    time("coups triés (Ctx::ordered)", &|s| {
+        evals[idx(s)].1.ordered(s).len() as u64
+    });
+    time("jouer un coup (apply_move)", &|s| {
+        apply_move(s, &legal_moves(s)[0]).ply as u64
+    });
     time("référence : retrouver l'indice", &|s| idx(s) as u64);
 }
