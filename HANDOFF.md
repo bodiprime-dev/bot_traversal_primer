@@ -305,6 +305,22 @@ Par-dessus la course en temps (76,0 % à 3 600 nœuds, 70,4 % à 3 000) :
 Valoriser la couverture regroupe les pièces au lieu de les faire avancer : elle coûte des temps.
 Les reprises sont l'affaire de la recherche (règle de combat exacte), pas de l'évaluation.
 
+## Réglage automatique SPSA (examples/tune.rs) : pas de gain
+
+383 itérations (arrêt par recyclage du conteneur), 16 parties d'auto-jeu par itération ;
+moyenne des 100 dernières : value [18, 64, 78], progress [5, 9, 7], tempo_race 30,
+sentinel_sq 5, start_race 38 (± 24, bruit), cover 1.
+
+| Test | Actuel | Réglé |
+|---|---|---|
+| natif 3 000 / 3 600 / 4 500 (contre Mont Blanc) | 70,4 / 76,0 / 76,2 % | 70,8 / 71,4 / 73,4 % |
+| wasm contre Mont Blanc (400) | 72,5 % | 73,0 % |
+| wasm, réglé contre actuel (200) | — | 49,5 % |
+| wasm contre sommet (200) | — | 84,5 % |
+
+Non retenu. L'évaluation est plate autour des poids actuels : la limite est dans sa forme (une
+somme de termes indépendants), pas dans ses coefficients. D'où Piolet-NN.
+
 ## Prochaine étape : évaluation par poids d'actions
 
 Remplacer `Ctx::evaluate` par notre fonction, avec une structure de poids réglable, par exemple :
