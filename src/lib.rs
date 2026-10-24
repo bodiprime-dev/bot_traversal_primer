@@ -52,11 +52,21 @@ thread_local! {
     static BOT: RefCell<Option<Piolet>> = const { RefCell::new(None) };
 }
 
+/// Réglages du bot. Des poids peuvent être fixés à la compilation, sans toucher au code :
+/// `PIOLET_W="value_e=18,tempo_race=30" cargo build --release --target wasm32-unknown-unknown`.
+fn config() -> Config {
+    let mut cfg = Config::default();
+    if let Some(w) = option_env!("PIOLET_W") {
+        cfg.weights.apply(w).expect("PIOLET_W");
+    }
+    cfg
+}
+
 fn choose(turn: &Turn) -> usize {
     RESERVE.store(turn.fuel - turn.fuel * SPEND_NUM / SPEND_DEN, Ordering::Relaxed);
     let pick = BOT.with(|b| {
         let mut b = b.borrow_mut();
-        let bot = b.get_or_insert_with(|| Piolet::new(Config::default()));
+        let bot = b.get_or_insert_with(|| Piolet::new(config()));
         bot.choose(&turn.state, &turn.moves, out_of_fuel)
     });
     log(&format!(
