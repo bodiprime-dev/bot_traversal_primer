@@ -324,6 +324,9 @@ pub fn exact_turns(heights: &[u8; SQUARES], owner: u8, kind: Kind) -> [u8; SQUAR
     turns
 }
 
+/// Taille de l'anneau de la file à seaux de `blocked_costs` (> coût maximal d'une arête).
+const RING: usize = 8;
+
 /// Données fixes pendant un coup : le relief ne change pas, les coûts de sortie « relief
 /// seul » se calculent une fois.
 pub struct Eval {
@@ -469,7 +472,66 @@ impl Eval {
         }
         let wall = |sq: u8| walls[sq as usize];
         let ally = |sq: u8| state.at(sq).is_some_and(|i| state.piece(i).owner == owner);
+        // Coût pour ENTRER sur une case depuis une voisine : la marche, plus la pièce à écarter
+        // (alliée) ou à abattre (adverse).
+        let enter = |cur: u8| {
+            if ally(cur) {
+                w.ally
+            } else if other(cur).is_some() {
+                w.soft
+            } else {
+                0
+            }
+        };
         let mut dist = [u16::MAX; SQUARES];
+        // Arêtes de coût 1 à 3 + max(ally, soft) : file à seaux en anneau (Dial), sans tas ni
+        // allocation. Le tableau des distances ne dépend pas de l'ordre de traitement : même
+        // résultat que Dijkstra avec tas (test same_as_sdk). Au-delà, repli sur le tas.
+        let max_edge = 3 + w.ally.max(w.soft) as usize;
+        if max_edge < RING {
+            let mut ring = [[0u8; SQUARES]; RING];
+            let mut len = [0usize; RING];
+            let mut pending = 0usize;
+            for x in 0..SIZE {
+                let s = (row * SIZE + x) as u8;
+                if !wall(s) {
+                    dist[s as usize] = 1;
+                    ring[1][len[1]] = s;
+                    len[1] += 1;
+                    pending += 1;
+                }
+            }
+            let mut d = 1usize;
+            while pending > 0 {
+                let slot = d % RING;
+                let mut k = 0;
+                while k < len[slot] {
+                    let cur = ring[slot][k];
+                    k += 1;
+                    pending -= 1;
+                    if dist[cur as usize] as usize != d {
+                        continue; // entrée périmée
+                    }
+                    let e = enter(cur);
+                    for &nb in neighbors_of(cur) {
+                        if wall(nb) {
+                            continue;
+                        }
+                        let nd = d + step_cost(&state.heights, nb, cur) as usize + e as usize;
+                        if nd < dist[nb as usize] as usize {
+                            dist[nb as usize] = nd as u16;
+                            let s2 = nd % RING;
+                            ring[s2][len[s2]] = nb;
+                            len[s2] += 1;
+                            pending += 1;
+                        }
+                    }
+                }
+                len[slot] = 0;
+                d += 1;
+            }
+            return dist;
+        }
         let mut heap = BinaryHeap::new();
         for x in 0..SIZE {
             let s = (row * SIZE + x) as u8;
@@ -482,20 +544,12 @@ impl Eval {
             if d > dist[cur as usize] {
                 continue;
             }
-            // Coût pour ENTRER sur `cur` depuis une voisine : la marche, plus la pièce à
-            // écarter (alliée) ou à abattre (adverse).
-            let enter = if ally(cur) {
-                w.ally
-            } else if other(cur).is_some() {
-                w.soft
-            } else {
-                0
-            };
+            let e = enter(cur);
             for &nb in neighbors_of(cur) {
                 if wall(nb) {
                     continue;
                 }
-                let nd = d + step_cost(&state.heights, nb, cur) as u16 + enter;
+                let nd = d + step_cost(&state.heights, nb, cur) as u16 + e;
                 if nd < dist[nb as usize] {
                     dist[nb as usize] = nd;
                     heap.push(Reverse((nd, nb)));
