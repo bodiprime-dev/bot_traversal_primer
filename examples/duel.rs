@@ -98,9 +98,33 @@ fn sprint_move(s: &State, moves: &[Move], turns: &[u8; 100], cost: &[u16; 100]) 
         .copied()
 }
 
-fn play(board: [u8; 100], piolet_side: u8, nodes: u64, cfg: Config, sprint: bool) -> Game {
+/// Hasard reproductible (splitmix64).
+fn splitmix(seed: &mut u64) -> u64 {
+    *seed = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = *seed;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// Ouverture aléatoire : `--open N` demi-coups tirés au hasard, graine `--oseed` et numéro de
+/// partie. Les deux réglages comparés jouent la MÊME ouverture (comparaison appariée) ; sans elle,
+/// le duel est déterministe et rejouer plus de parties ne donne que des doublons.
+struct Opening {
+    plies: u16,
+    seed: u64,
+}
+
+fn play(board: [u8; 100], piolet_side: u8, nodes: u64, cfg: Config, sprint: bool, open: &Opening, game: usize) -> Game {
     let mut bot = Piolet::new(cfg);
     let mut s = new_game(board);
+    let mut oseed = open.seed.wrapping_mul(1_000_003).wrapping_add(game as u64 / 2); // même ouverture dans les deux couleurs
+    while s.ply < open.plies && !s.over {
+        let moves = legal_moves(&s);
+        let quiet: Vec<_> = moves.iter().filter(|m| m.kind != MoveKind::Pass && m.kind != MoveKind::Exit).collect();
+        let mv = if quiet.is_empty() { moves[0] } else { *quiet[(splitmix(&mut oseed) % quiet.len() as u64) as usize] };
+        s = apply_move(&s, &mv);
+    }
     let (turns, cost) = (exact_turns(&board, piolet_side, Kind::Sentinel), exit_costs(&board, piolet_side));
     let mut exits = Vec::new();
     let mut captures = Vec::new();
@@ -197,6 +221,7 @@ fn main() {
         ..Config::default()
     };
     let sprint = arg(&args, "--sprint", 0) != 0;
+    let opening = Opening { plies: arg(&args, "--open", 0) as u16, seed: arg(&args, "--oseed", 1) };
     let boards = boards();
 
     let next = AtomicUsize::new(0);
@@ -209,7 +234,7 @@ fn main() {
                     break;
                 }
                 let side = if g % 2 == 0 { 1 } else { 2 };
-                let game = Game { index: g, ..play(boards[(g / 2) % boards.len()], side, nodes, cfg, sprint) };
+                let game = Game { index: g, ..play(boards[(g / 2) % boards.len()], side, nodes, cfg, sprint, &opening, g) };
                 done.lock().unwrap().push(game);
             });
         }
