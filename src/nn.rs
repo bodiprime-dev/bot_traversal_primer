@@ -28,6 +28,12 @@ fn kind_idx(k: Kind) -> usize {
 /// Entrées du réseau pour la position, du point de vue du camp au trait : indices des entrées
 /// binaires actives, et entrées numériques.
 pub fn features(eval: &Eval, state: &State) -> (Vec<u16>, [f32; DENSE]) {
+    features_with(eval, state, &eval.piece_turns(state))
+}
+
+/// Comme `features`, avec les tours de sortie par pièce déjà calculés (`Eval::piece_turns` : deux
+/// Dijkstra, la partie coûteuse), pour ne pas les refaire quand l'évaluation les a déjà.
+pub fn features_with(eval: &Eval, state: &State, turns: &[i32; traversal_bot::core::state::MAX_PIECES]) -> (Vec<u16>, [f32; DENSE]) {
     let me = state.to_move;
     let them = if me == 1 { 2 } else { 1 };
     let rot = |sq: u8| if me == 1 { sq as usize } else { SQUARES - 1 - sq as usize };
@@ -38,7 +44,7 @@ pub fn features(eval: &Eval, state: &State) -> (Vec<u16>, [f32; DENSE]) {
         sparse.push(((rel(p.owner) * 3 + kind_idx(p.kind)) * SQUARES + rot(p.sq)) as u16);
     }
 
-    let turns = eval.piece_turns(state);
+    let turns = *turns;
     // [camp relatif][type] : nombre, tours de la plus proche (plafonnés à 15), avance cumulée.
     let mut count = [[0f32; 3]; 2];
     let mut best = [[15i32; 3]; 2];
@@ -106,6 +112,21 @@ mod tests {
             assert_eq!(a, b);
             // Seule différence : la course en temps (le trait change de camp).
             assert_eq!(da[..18], db[..18]);
+        }
+    }
+
+    /// Réutiliser les tours déjà calculés ne change rien aux entrées.
+    #[test]
+    fn features_with_matches_features() {
+        let heights = boards()[7];
+        let e = Eval::new(&heights, Weights::default());
+        let mut s = new_game(heights);
+        for _ in 0..25 {
+            assert_eq!(features(&e, &s), features_with(&e, &s, &e.piece_turns(&s)));
+            if s.over {
+                break;
+            }
+            s = apply_move(&s, &legal_moves(&s)[3 % legal_moves(&s).len()]);
         }
     }
 

@@ -546,9 +546,10 @@ impl Eval {
             // Évaluation habituelle + correction du réseau, toutes deux du point de vue du camp au
             // trait (comme à l'entraînement), puis retournée pour l'autre camp.
             let mover = state.to_move;
-            let (sparse, dense) = crate::nn::features(self, state);
+            let turns = self.piece_turns(state); // calculé une seule fois pour les deux
+            let (sparse, dense) = crate::nn::features_with(self, state, &turns);
             let correction = crate::nn::net().logit(&sparse, &dense).clamp(-30.0, 30.0) * self.w.nn_resid as f32;
-            let v = self.evaluate_base(state, mover) + correction as i32;
+            let v = self.evaluate_base_with(state, mover, turns) + correction as i32;
             return if side == mover { v } else { -v };
         }
         self.evaluate_base(state, side)
@@ -556,6 +557,11 @@ impl Eval {
 
     /// Évaluation par termes (hors réseau), du point de vue de `side`.
     fn evaluate_base(&self, state: &State, side: u8) -> i32 {
+        self.evaluate_base_with(state, side, self.piece_turns(state))
+    }
+
+    /// `evaluate_base` avec les tours de sortie par pièce déjà calculés.
+    fn evaluate_base_with(&self, state: &State, side: u8, turns: [i32; MAX_PIECES]) -> i32 {
         let w = &self.w;
         let nobody_out = state.finished == 0;
         let other = if side == 1 { 2 } else { 1 };
@@ -566,7 +572,6 @@ impl Eval {
         } else {
             0
         };
-        let turns = self.piece_turns(state);
         let mut first = [i32::MAX; 2]; // pièce la plus rapide de chaque camp
         let mut sentinel = [i32::MAX; 2]; // Sentinelle la plus rapide de chaque camp
         // Tours de la pièce la plus rapide de chaque camp, par Force (indices 1 à 3).
