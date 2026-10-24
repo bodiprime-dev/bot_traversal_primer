@@ -342,6 +342,26 @@ Gain du réseau sur l'évaluation : 0,018 de log-loss, IC 95 % par partie (boots
 2e époque (76 000 positions, ~1 600 parties seulement). La cible mixte (distillation de la
 recherche) et la régularisation sont indispensables.
 
+## Piolet-NN, étape 2 : le réseau seul joue bien moins bien (à diagnostiquer)
+
+Inférence Rust (`src/nn.rs`, identique à numpy), réseau 625→32→32→1 de l'étape 1 à la place de
+l'évaluation (`Weights::nn`, échelle 270 = pente de la régression logistique de l'évaluation) :
+
+| Contre Mont Blanc | 3 600 nœuds | 3 000 nœuds |
+|---|---|---|
+| actuel | 76,0 % | 70,4 % |
+| `nn=270` | 52,4 % (54 / 146, z −6,5) | 51,4 % (58 / 136, z −5,6) |
+| `nn=270,nn_race=1` | 55,0 % (55 / 137, z −5,9) | 51,9 % (61 / 137, z −5,4) |
+
+Le réseau prédit mieux l'issue (étape 1) mais départage mal les positions voisines que la
+recherche compare, et n'a jamais vu de positions de feuilles (pièces en prise, échanges
+inachevés). Natif : il est plus rapide que l'évaluation (16 parties : 9 s contre 16 s).
+Pistes : mesurer l'accord avec le coup d'une recherche profonde ; hybride évaluation + k × réseau ;
+entraîner aussi sur des positions de feuilles.
+
+Infrastructure : le conteneur est recyclé environ toutes les 35 à 90 minutes ; tout calcul long
+doit être reprenable (nn/generate.sh) ou tenir dans ce délai.
+
 ## Prochaine étape : évaluation par poids d'actions
 
 Remplacer `Ctx::evaluate` par notre fonction, avec une structure de poids réglable, par exemple :
