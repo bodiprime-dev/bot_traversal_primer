@@ -236,6 +236,25 @@ impl Search<'_> {
         Ok(())
     }
 
+    /// Sorties et captures seulement, dans l'ordre exact de `Ctx::ordered` (sorties : 1000 + Force
+    /// de la pièce ; captures : 500 + 10 × Force de la cible ; tri stable décroissant). Sans trier
+    /// les coups calmes que la recherche de calme n'examine pas : même recherche, moins de calcul.
+    fn tactical(state: &State) -> Vec<Move> {
+        let mut keyed: Vec<(i32, Move)> = legal_moves(state)
+            .into_iter()
+            .filter_map(|m| match m.kind {
+                MoveKind::Exit => Some((1000 + state.piece(m.piece).kind.strength() as i32, m)),
+                MoveKind::Attack => {
+                    let target = state.piece(state.at(m.to).expect("cible"));
+                    Some((500 + 10 * target.kind.strength() as i32, m))
+                }
+                _ => None,
+            })
+            .collect();
+        keyed.sort_by_key(|(k, _)| Reverse(*k));
+        keyed.into_iter().map(|(_, m)| m).collect()
+    }
+
     /// Indice d'un coup calme dans l'historique.
     fn history_idx(state: &State, m: &Move) -> usize {
         (state.to_move as usize - 1) * 10_000 + state.piece(m.piece).sq as usize * 100 + m.to as usize
@@ -491,10 +510,7 @@ impl Search<'_> {
         self.tick()?;
         alpha = alpha.max(stand);
         let mut best = stand;
-        for m in self.ctx.ordered(state) {
-            if !matches!(m.kind, MoveKind::Exit | MoveKind::Attack) {
-                break; // triés : sorties et captures d'abord
-            }
+        for m in Self::tactical(state) {
             let v = -self.quiesce(&apply_move(state, &m), -beta, -alpha, plies - 1)?;
             best = best.max(v);
             alpha = alpha.max(v);
@@ -503,5 +519,31 @@ impl Search<'_> {
             }
         }
         Ok(best)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use traversal_bot::core::new_game;
+
+    /// `tactical` donne exactement les sorties et captures de `Ctx::ordered`, dans le même ordre.
+    #[test]
+    fn tactical_matches_sdk_order() {
+        let mut checked = 0;
+        for (b, heights) in crate::boards().into_iter().take(40).enumerate() {
+            let ctx = Ctx::with_insight(&heights, 3, Tuning::default());
+            let mut s = new_game(heights);
+            let mut seed = b as u64 + 1;
+            while !s.over && s.ply < 80 {
+                let expected: Vec<Move> = ctx.ordered(&s).into_iter().filter(|m| matches!(m.kind, MoveKind::Exit | MoveKind::Attack)).collect();
+                assert_eq!(Search::tactical(&s), expected);
+                checked += 1;
+                let moves = legal_moves(&s);
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                s = apply_move(&s, &moves[(seed >> 33) as usize % moves.len()]);
+            }
+        }
+        assert!(checked > 1000);
     }
 }
