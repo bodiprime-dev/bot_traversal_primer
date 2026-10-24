@@ -10,6 +10,7 @@
 //! ```
 
 pub mod eval;
+pub mod nn;
 pub mod search;
 pub mod tempo;
 

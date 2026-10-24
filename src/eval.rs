@@ -485,7 +485,7 @@ impl Eval {
     }
 
     /// Tours (au mieux) pour sortir, pour chaque pièce, obstacles compris.
-    fn piece_turns(&self, state: &State) -> [i32; MAX_PIECES] {
+    pub(crate) fn piece_turns(&self, state: &State) -> [i32; MAX_PIECES] {
         let w = &self.w;
         let mut out = [0; MAX_PIECES];
         let blocked = [self.blocked_costs(state, 1), self.blocked_costs(state, 2)];
@@ -646,7 +646,7 @@ impl Eval {
     /// Demi-coups avant que `owner` puisse jouer le `turns`-ième coup d'une pièce : le camp
     /// au trait joue le premier.
     #[inline]
-    fn plies(state: &State, owner: u8, turns: i32) -> i32 {
+    pub(crate) fn plies(state: &State, owner: u8, turns: i32) -> i32 {
         match turns {
             i32::MAX => i32::MAX,
             t if state.to_move == owner => 2 * t - 1,
