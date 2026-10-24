@@ -321,6 +321,27 @@ sentinel_sq 5, start_race 38 (± 24, bruit), cover 1.
 Non retenu. L'évaluation est plate autour des poids actuels : la limite est dans sa forme (une
 somme de termes indépendants), pas dans ses coefficients. D'où Piolet-NN.
 
+## Piolet-NN, étape 1 : le réseau prédit mieux que l'évaluation (go)
+
+Données : `examples/dataset.rs`, auto-jeu de Piolet (3 000 nœuds, 4 premiers demi-coups au hasard),
+~2 000 parties = 93 435 positions (arrêt par recyclage du conteneur). Entraînement `nn/train.py`
+(numpy) sur les cartes 0-139, validation 140-159 (arrêt au meilleur point), test 160-199.
+
+| Test (cartes 160-199) | log-loss | précision | début | milieu | fin |
+|---|---|---|---|---|---|
+| constante | 0,693 | — | | | |
+| évaluation actuelle | 0,621 | 64,5 % | 0,678 | 0,604 | 0,562 |
+| **réseau 625→32→32→1, cible mixte (résultat + recherche), L2 1e-3** | **0,603** | **65,3 %** | 0,661 | 0,587 | 0,539 |
+| réseau, cible recherche | 0,610 | 64,9 % | | | |
+| réseau sans les entrées binaires | 0,619 | 64,7 % | | | |
+| réseau, cible résultat seul | 0,628 | 63,7 % | | | |
+| recherche de Piolet | 0,584 | 66,5 % | 0,652 | 0,564 | 0,512 |
+
+Gain du réseau sur l'évaluation : 0,018 de log-loss, IC 95 % par partie (bootstrap, 400 parties)
+0,002 à 0,035. Premier essai (128 neurones, cible résultat, L2 1e-5) : surapprentissage dès la
+2e époque (76 000 positions, ~1 600 parties seulement). La cible mixte (distillation de la
+recherche) et la régularisation sont indispensables.
+
 ## Prochaine étape : évaluation par poids d'actions
 
 Remplacer `Ctx::evaluate` par notre fonction, avec une structure de poids réglable, par exemple :

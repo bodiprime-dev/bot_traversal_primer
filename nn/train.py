@@ -123,7 +123,13 @@ def main():
     ap.add_argument("--hidden", type=int, default=128)
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--batch", type=int, default=512)
+    ap.add_argument("--l2", type=float, default=1e-5)
+    ap.add_argument("--target", choices=["result", "search", "blend"], default="result",
+                    help="cible : résultat final, score de la recherche (distillation), ou mélange")
+    ap.add_argument("--mix", type=float, default=0.5, help="part du résultat final dans le mélange")
+    ap.add_argument("--no-sparse", action="store_true", help="ignorer les 600 entrées binaires")
     ap.add_argument("--save")
+    ap.add_argument("--dump", help="prédictions sur le test (.npz)")
     ap.add_argument("--test-from", type=int, default=TEST_FROM)
     a = ap.parse_args()
 
@@ -134,22 +140,39 @@ def main():
     ply_frac = dense[:, 22]  # demi-coup / limite
 
     rng = np.random.default_rng(1)
+    if a.no_sparse:
+        idx = np.full_like(idx, SPARSE)
+    clip = lambda v: np.clip(v, -2000, 2000)  # victoires forcées : ±100 000
+    # Validation (arrêt au meilleur point) : les 20 dernières cartes d'entraînement.
+    val = train & (boards >= a.test_from - 20)
+    train = train & ~val
+    p_search = fit_logistic(clip(search[train]), y[train])(clip(search))
+    target = {"result": y, "search": p_search, "blend": a.mix * y + (1 - a.mix) * p_search}[a.target]
     net = Net(a.hidden, rng)
+    best, best_p = None, None
     tr = np.flatnonzero(train)
     for epoch in range(a.epochs):
         rng.shuffle(tr)
         for i in range(0, len(tr), a.batch):
             b = tr[i:i + a.batch]
-            net.step(idx[b], dense[b], y[b], a.lr)
+            net.step(idx[b], dense[b], target[b], a.lr, a.l2)
         p = net.predict(idx[test], dense[test])
-        print(f"  époque {epoch + 1:>2} : test log-loss {logloss(p, y[test]):.4f}, précision {accuracy(p, y[test]):.3f}")
+        pv = net.predict(idx[val], dense[val])
+        lv = logloss(pv, y[val])
+        if best is None or lv < best:
+            best, best_p = lv, {k: v.copy() for k, v in net.p.items()}
+        print(f"  époque {epoch + 1:>2} : validation log-loss {lv:.4f}, test {logloss(p, y[test]):.4f} / {accuracy(p, y[test]):.3f}")
+    net.p = best_p  # meilleur point sur la validation
 
     print("\nSur les cartes de test (log-loss / précision ; détail par phase de jeu) :")
     report("constante (1/2)", np.full(test.sum(), 0.5), y[test], ply_frac[test])
     report("évaluation actuelle", fit_logistic(static[train], y[train])(static[test]), y[test], ply_frac[test])
-    clip = lambda v: np.clip(v, -2000, 2000)  # victoires forcées : ±100 000
     report("recherche de Piolet", fit_logistic(clip(search[train]), y[train])(clip(search[test])), y[test], ply_frac[test])
     report("réseau", net.predict(idx[test], dense[test]), y[test], ply_frac[test])
+    if a.dump:  # prédictions sur le test, pour un bootstrap par partie
+        p_static = fit_logistic(static[train], y[train])(static[test])
+        p_net = net.predict(idx[test], dense[test])
+        np.savez(a.dump, board=boards[test], ply=ply_frac[test], y=y[test], static=p_static, search=p_search[test], net=p_net)
     if a.save:
         np.savez(a.save, **net.p)
         print(f"poids enregistrés : {a.save}")
