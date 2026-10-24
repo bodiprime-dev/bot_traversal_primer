@@ -425,6 +425,28 @@ dépassement maximal mesuré au-delà de la réserve est de 46 M (2 % du budget)
 - `duel --open N --oseed S` : N demi-coups d'ouverture au hasard, identiques pour les deux réglages
   comparés : des échantillons appariés indépendants, à cumuler.
 
+## Ligue wasm : version accélérée, part du fuel
+
+Arène officielle (fuel réel), même logique de recherche, seule la vitesse change :
+
+| Contre | ancienne version (`tempo`) | accélérée, 50 % du fuel | accélérée, 80 % du fuel |
+|---|---|---|---|
+| Mont Blanc (400) | 72,5 % | **75,0 %** (Elo +191 ± 42) | 75,1 % |
+| ancienne version (200) | — | **56,0 %** (+42 ± 50) | 52,8 % |
+| sommet (200) | — | 80,2 % | 84,5 % |
+
+0 faute ; fuel moyen 41 % (50 %) et 63 % (80 %). Version accélérée retenue (mêmes décisions, plus de
+nœuds). 80 % du fuel : +50 % de nœuds sans gain mesurable : le calcul n'est plus le facteur
+limitant. On garde 50 %.
+
+## Piolet-NN sur les feuilles de la recherche
+
+`examples/leaf.rs` (600 parties, 21 235 positions de feuilles de variante principale, étiquette =
+recherche profonde de la racine). `nn/distill.py` : 14,0 % de la variance expliquée sur les cartes de
+test (erreur 0,069 contre 0,080) ; correction prédite : écart-type 37 points (cible 76).
+Distillation aux racines (80 000 positions) : 36,7 % expliqués, mais perte au jeu (76,0 → 67,6 %
+à pleine échelle, 73,1 % à demi-échelle) : les racines ne ressemblent pas aux feuilles.
+
 ## Prochaine étape : évaluation par poids d'actions
 
 Remplacer `Ctx::evaluate` par notre fonction, avec une structure de poids réglable, par exemple :
