@@ -951,3 +951,13 @@ impl Search<'_> {
 5. **Coût réel** : à nœuds égaux, le surcoût de l'évaluation est invisible. Dernière étape : duel wasm à
    fuel égal (budget de l'arène). Adoption seulement si elle reste positive là aussi.
 6. **Mesure secondaire** (explicative, ne décide rien) : part des courses de Sentinelles gagnées.
+
+### Résultats, étapes 1 à 3 (2026-10-25)
+
+| | graine 1 | 2 | 3 | 4 | cumul 1 600 parties |
+|---|---|---|---|---|---|
+| `safe_race=1` | +6,1 | +6,3 | +8,9 | +5,4 | **+6,66 ± 2,66, z = 5,00** |
+| `safe_race=2` | +7,4 | +3,5 | +11,5 | +6,6 | **+7,25 ± 2,70, z = 5,37** |
+
+Les deux passent le seuil z ≥ 2,24. Retenue pour la confirmation : `safe_race=2`, plus grand écart cumulé
+(la différence entre les deux n'est pas significative). Étape 4 : graines 5 à 8, référence rejouée sur ces graines.
