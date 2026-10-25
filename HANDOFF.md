@@ -961,3 +961,23 @@ impl Search<'_> {
 
 Les deux passent le seuil z ≥ 2,24. Retenue pour la confirmation : `safe_race=2`, plus grand écart cumulé
 (la différence entre les deux n'est pas significative). Étape 4 : graines 5 à 8, référence rejouée sur ces graines.
+
+### Résultats, étapes 4 et 5 — ADOPTÉ (2026-10-25)
+
+Étape 4, graines neuves 5 à 8 (référence rejouée sur ces graines) :
+
+| graine 5 | 6 | 7 | 8 | cumul 1 600 parties |
+|---|---|---|---|---|
+| +2,6 | +12,3 | +8,0 | +10,1 | **+8,25 ± 2,78, z = 5,94** (seuil 1,64) |
+
+Étape 5, wasm à fuel égal (arène locale, 400 parties = 200 cartes × 2 couleurs). Coût d'abord réduit
+(masques de cases attaquables : 13,5 -> 7,3 µs par évaluation, décisions identiques) :
+
+| duel | résultat |
+|---|---|
+| `safe_race=2` contre l'ancienne version (dist 348443c5) | **71,5 %** (282 V / 8 N / 110 D), Elo +160 ± 40 |
+| `safe_race=2` contre Mont Blanc | 79,9 % (319 / 1 / 80) |
+| ancienne version contre Mont Blanc | 74,5 % (295 / 6 / 99) |
+
+Aucune faute, fuel moyen 823 M par coup (41 % du budget). `safe_race: 2` passe dans `Weights::default()`.
+Courses secondaires (explicatif) : graine 1, échanges de Sentinelles lancés 36 (réf. 28), subis 9 (réf. 14).

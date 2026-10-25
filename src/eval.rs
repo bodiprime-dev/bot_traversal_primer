@@ -122,12 +122,15 @@ impl Default for Weights {
         // des Sentinelles (voir HANDOFF.md). `exit_race` seule : 49,9 % -> 55,8 %.
         // `tempo_race` 25 : 254 parties améliorées / 204 dégradées sur 3 budgets (z ≈ +2,3),
         // surtout en Bleu ; arène wasm 70,6 % -> 72,5 %.
+        // `safe_race` 2 : +7,3 points sur 1 600 parties (z = 5,4), confirmé sur graines neuves
+        // (+8,3, z = 5,9) ; wasm à fuel égal : 71,5 % contre l'ancienne version.
         Weights {
             start_race: 0,
             exit_race: 400,
             race_spread: 3,
             race_spread_per: 4,
             tempo_race: 25,
+            safe_race: 2,
             ..Weights::sdk()
         }
     }
