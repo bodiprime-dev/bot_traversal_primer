@@ -999,3 +999,16 @@ points pour le camp qui perd sa Sentinelle et reprend ; avec les variantes : T6 
    `confirm/r2_s{5..8}`, z ≥ 1,64. Une combinaison T + H ne serait testée qu'ensuite, comme nouvelle hypothèse.
 5. Wasm à fuel égal : face-à-face contre la version adoptée, et contre Mont Blanc.
 6. Secondaire (explicatif) : nombre d'échanges de Sentinelles et score des parties avec échange.
+
+### Résultats — NON ADOPTÉ (2026-10-25)
+
+| variante | graine 1 | 2 | 3 | 4 | cumul 1 600 parties |
+|---|---|---|---|---|---|
+| T6 (`trade_adv=6`) | +0,9 | +4,5 | +0,6 | −1,9 | +1,03 ± 2,17, z = 0,95 |
+| T12 (`trade_adv=12`) | −0,6 | +2,3 | −1,5 | −5,5 | −1,34 ± 2,30, z = −1,17 |
+| H4 (`hole=4`) | −2,9 | +1,9 | −2,0 | −1,5 | −1,12 ± 2,45, z = −0,92 |
+| H8 (`hole=8`) | −4,0 | −3,3 | −3,6 | −6,0 | **−4,22 ± 2,55, z = −3,31** |
+
+Aucune ne passe le seuil (2,50) : pas de confirmation ni de wasm. H8 dégrade nettement. Échanges (graines 1-2,
+parties avec échange) : réf. 43 / 51, T6 47 / 48, H8 38 / 53 (score 58 % sur la graine 2, contre 65 %).
+Les termes restent dans le code, coupés (0).
