@@ -981,3 +981,21 @@ Les deux passent le seuil z ≥ 2,24. Retenue pour la confirmation : `safe_race=
 
 Aucune faute, fuel moyen 823 M par coup (41 % du budget). `safe_race: 2` passe dans `Weights::default()`.
 Courses secondaires (explicatif) : graine 1, échanges de Sentinelles lancés 36 (réf. 28), subis 9 (réf. 14).
+
+## Poids de l'échange (`trade_adv`, `hole`) — protocole fixé AVANT les résultats (2026-10-25)
+
+Idée (utilisateur) : la valeur d'un échange de Sentinelle = l'avancée de la pièce qui reprend + l'espace
+que la pièce prise laisse derrière. `examples/trades` (3 945 échanges) : l'échange vaut aujourd'hui −45
+points pour le camp qui perd sa Sentinelle et reprend ; avec les variantes : T6 −38, T12 −30, H4 −39, H8 −33.
+
+- `trade_adv` : points par rangée au-delà de la ligne médiane, par Explorateur et Avant-garde.
+- `hole` : points par case de la moitié adverse qu'aucune pièce adverse ne peut attaquer (moins l'inverse).
+
+1. Référence : version adoptée (`safe_race=2`), listes `safeab/r2_s{1..4}` (mêmes décisions que le binaire actuel).
+2. Quatre variantes, toutes rapportées : T6 (`trade_adv=6`), T12 (`trade_adv=12`), H4 (`hole=4`), H8 (`hole=8`).
+   5 000 nœuds, `--open 6`, graines 1 à 4, 400 parties chacune, appariées. Cumul `scripts/abpool.py`.
+3. Seuil : quatre variantes -> z ≥ 2,50 (Bonferroni, 5 % bilatéral).
+4. Variante retenue (plus grand écart cumulé parmi celles qui passent) : confirmation graines 5 à 8 contre
+   `confirm/r2_s{5..8}`, z ≥ 1,64. Une combinaison T + H ne serait testée qu'ensuite, comme nouvelle hypothèse.
+5. Wasm à fuel égal : face-à-face contre la version adoptée, et contre Mont Blanc.
+6. Secondaire (explicatif) : nombre d'échanges de Sentinelles et score des parties avec échange.

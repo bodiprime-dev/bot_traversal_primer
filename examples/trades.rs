@@ -1,7 +1,7 @@
 //! Poids actuel d'un échange de Sentinelle dans l'évaluation, terme par terme.
 //!
 //! ```text
-//! cargo run --release --example trades -- [--seeds 5]
+//! cargo run --release --example trades -- [--seeds 5] [--w "trade_adv=3"]
 //! ```
 //!
 //! Positions de milieu de partie (coups au hasard depuis le départ, sur les 200 cartes). Dans
@@ -63,7 +63,10 @@ fn main() {
         .position(|a| a == "--seeds")
         .and_then(|i| args.get(i + 1))
         .map_or(5, |v| v.parse().expect("nombre"));
-    let w = Weights::default();
+    let mut w = Weights::default();
+    if let Some(o) = args.iter().position(|a| a == "--w").and_then(|i| args.get(i + 1)) {
+        w.apply(o).expect("--w");
+    }
     // sums[0] : total ; sums[1 + g] : groupe g.
     let mut sums = [0f64; 1 + GROUPS.len()];
     let mut by_pair: Pairs = Default::default();

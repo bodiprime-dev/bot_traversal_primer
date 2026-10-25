@@ -114,6 +114,12 @@ pub struct Weights {
     /// pas pour toujours). Voit, dans les deux sens, une Avant-garde bien placée qui interdit une
     /// zone et force un détour.
     pub safe_race: i32,
+    /// Poids de l'échange, avancée : points par rangée au-delà de la ligne médiane pour chaque
+    /// Explorateur et Avant-garde (la pièce qui reprend une Sentinelle s'installe chez l'adversaire).
+    pub trade_adv: i32,
+    /// Poids de l'échange, espace : points par case de la moitié adverse qu'aucune pièce adverse
+    /// ne peut attaquer (le trou qu'une pièce prise laisse derrière elle), moins l'inverse.
+    pub hole: i32,
 }
 
 impl Default for Weights {
@@ -138,7 +144,7 @@ impl Default for Weights {
 
 impl Weights {
     /// Noms des poids réglables par `set` / `get` (réglage automatique, options du duel).
-    pub const NAMES: [&'static str; 20] = [
+    pub const NAMES: [&'static str; 22] = [
         "value_e",
         "value_v",
         "value_s",
@@ -159,6 +165,8 @@ impl Weights {
         "nn_race",
         "nn_resid",
         "safe_race",
+        "trade_adv",
+        "hole",
     ];
 
     fn slot(&mut self, name: &str) -> Option<&mut i32> {
@@ -183,6 +191,8 @@ impl Weights {
             "nn_race" => &mut self.nn_race,
             "nn_resid" => &mut self.nn_resid,
             "safe_race" => &mut self.safe_race,
+            "trade_adv" => &mut self.trade_adv,
+            "hole" => &mut self.hole,
             _ => return None,
         })
     }
@@ -248,6 +258,8 @@ impl Weights {
             nn_race: 0,
             nn_resid: 0,
             safe_race: 0,
+            trade_adv: 0,
+            hole: 0,
         }
     }
 }
@@ -425,7 +437,7 @@ impl Eval {
                 [Kind::Explorer, Kind::Vanguard, Kind::Sentinel].map(|k| attack_reach(heights, k)),
             )
         });
-        let safe = (w.safe_race != 0).then(|| {
+        let safe = (w.safe_race != 0 || w.hole != 0).then(|| {
             let mut walk = [[[u8::MAX; SQUARES]; SQUARES]; 3];
             for (k, kind) in [Kind::Explorer, Kind::Vanguard, Kind::Sentinel]
                 .into_iter()
@@ -890,7 +902,7 @@ impl Eval {
 
     /// `evaluate_base` avec les tours de sortie par pièce déjà calculés.
     fn evaluate_base_with(&self, state: &State, side: u8, mut turns: [i32; MAX_PIECES]) -> i32 {
-        if self.safe.is_some() {
+        if self.w.safe_race != 0 {
             // Une Sentinelle ne compte que ses tours SÛRS (jamais moins que sa distance brute).
             for (i, p) in state.pieces().iter().enumerate() {
                 if p.kind == Kind::Sentinel {
@@ -998,6 +1010,36 @@ impl Eval {
                 };
                 total += if p.owner == side { v } else { -v };
             }
+        }
+        if w.trade_adv != 0 {
+            for p in state.pieces() {
+                if p.kind != Kind::Sentinel {
+                    let row = (p.sq as usize / SIZE) as i32;
+                    let depth = if p.owner == 1 { row - 4 } else { 5 - row }.max(0);
+                    let v = w.trade_adv * depth;
+                    total += if p.owner == side { v } else { -v };
+                }
+            }
+        }
+        if w.hole != 0 {
+            let tables = self.safe.as_ref().expect("hole");
+            // Rangées 5 à 9 : moitié de Bleu, où Rouge va ; rangées 0 à 4 : l'inverse.
+            const TOP: u128 = !0u128 << 50 & (1u128 << 100) - 1;
+            const BOTTOM: u128 = (1u128 << 50) - 1;
+            let mut zone = [0u128; 2];
+            for p in state.pieces() {
+                zone[p.owner as usize - 1] |=
+                    tables.hit[p.kind.strength() as usize - 1][p.sq as usize];
+            }
+            let free = |o: u8| {
+                let (half, enemy) = if o == 1 {
+                    (TOP, zone[1])
+                } else {
+                    (BOTTOM, zone[0])
+                };
+                (half & !enemy).count_ones() as i32
+            };
+            total += w.hole * (free(side) - free(other));
         }
         if w.tempo_race != 0 && nobody_out {
             let mine = Eval::plies(state, side, sentinel[side as usize - 1]);
