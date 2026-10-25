@@ -404,6 +404,9 @@ struct SafeTables {
     turn: [u128; SQUARES],
     /// Cases d'où une Sentinelle de chaque camp sort en un tour.
     exit: [u128; 2],
+    /// `hit[type][case]` : cases qu'une pièce de ce type peut attaquer depuis cette case (marche
+    /// dans son Mouvement, plus diagonales et bonds pour l'Explorateur).
+    hit: [[u128; SQUARES]; 3],
 }
 
 impl Eval {
@@ -443,7 +446,29 @@ impl Eval {
                     .filter(|&s| e[s] == 1)
                     .fold(0u128, |m, s| m | 1 << s)
             });
-            Box::new(SafeTables { walk, turn, exit })
+            let mut hit = [[0u128; SQUARES]; 3];
+            for (k, row) in hit.iter_mut().enumerate() {
+                for (from, m) in row.iter_mut().enumerate() {
+                    let (fx, fy) = ((from % SIZE) as i32, (from / SIZE) as i32);
+                    for to in 0..SQUARES {
+                        let (dx, dy) = (
+                            ((to % SIZE) as i32 - fx).abs(),
+                            ((to / SIZE) as i32 - fy).abs(),
+                        );
+                        let special = k == 0
+                            && ((dx == 1 && dy == 1) || (dx + dy == 2 && (dx == 0 || dy == 0)));
+                        if to != from && (walk[k][from][to] != u8::MAX || special) {
+                            *m |= 1 << to;
+                        }
+                    }
+                }
+            }
+            Box::new(SafeTables {
+                walk,
+                turn,
+                exit,
+                hit,
+            })
         });
         Eval {
             costs: [exit_costs(heights, 1), exit_costs(heights, 2)],
@@ -602,21 +627,15 @@ impl Eval {
                 }
             }
         }
-        let (sx, sy) = ((s as usize % SIZE) as i32, (s as usize / SIZE) as i32);
         for (qi, q) in state.pieces().iter().enumerate() {
             if q.owner == owner || state.at(s) == Some(qi as u8) {
                 continue;
             }
             let k = q.kind.strength() as usize - 1;
-            let d = tables.walk[k][q.sq as usize][s as usize];
-            let special = q.kind == Kind::Explorer && {
-                let (qx, qy) = ((q.sq as usize % SIZE) as i32, (q.sq as usize / SIZE) as i32);
-                let (dx, dy) = ((qx - sx).abs(), (qy - sy).abs());
-                (dx == 1 && dy == 1) || (dx + dy == 2 && (dx == 0 || dy == 0))
-            };
-            if d == u8::MAX && !special {
+            if tables.hit[k][q.sq as usize] >> s & 1 == 0 {
                 continue;
             }
+            let d = tables.walk[k][q.sq as usize][s as usize];
             let adjacent = neighbors_of(s).contains(&q.sq);
             let height = (h[q.sq as usize] > h[s as usize]) as i32
                 - (h[q.sq as usize] < h[s as usize]) as i32;
@@ -649,6 +668,14 @@ impl Eval {
                 blocked |= 1 << q.sq;
             }
         }
+        // Cases qu'au moins une pièce adverse peut attaquer : ailleurs, aucun calcul de danger.
+        let zone = state
+            .pieces()
+            .iter()
+            .filter(|q| q.owner != p.owner)
+            .fold(0u128, |m, q| {
+                m | tables.hit[q.kind.strength() as usize - 1][q.sq as usize]
+            });
         let mut frontier = 1u128 << p.sq;
         let mut seen = frontier;
         for t in 1..limit {
@@ -664,7 +691,7 @@ impl Eval {
             }
             next &= !seen & !blocked;
             seen |= next;
-            let mut f = next;
+            let mut f = next & zone;
             while f != 0 {
                 let s = f.trailing_zeros() as u8;
                 f &= f - 1;
