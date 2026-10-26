@@ -1087,3 +1087,15 @@ Les deux passent, sur chaque banc. Retenue : SB (plus grand écart). Étape 3 : 
 | `sentinel_beam` contre Mont Blanc | **89,5 %** (v2 : 79,9 %) |
 
 Aucune faute, fuel moyen 828 à 933 M par coup. `sentinel_beam: true` dans `Config::default()`.
+
+## Arbitrage à la limite de coups (`adjudge`) — protocole fixé AVANT les résultats (2026-10-26)
+
+Troisième export (Piolet v3, 40 parties) : 2 défaites à la limite de 200 demi-coups (0-0, arbitrage par la pièce
+la plus avancée, `rules::adjudicate`), dont une contre Mont Blanc après 30 coups d'allers-retours. Dans les duels
+locaux, 1 à 3,5 % des parties vont à la limite. Terme : `adjudge` points au vainqueur de l'arbitrage, montant
+linéairement sur les `adjudge_window` (40) derniers demi-coups.
+
+Variantes : A3 (`adjudge=300`), A10 (`adjudge=1000`). Référence : version adoptée (`sentinel_beam`), listes
+`stage/SB_{mb,v1,fo}_s5..8`. Mesure : graines 5-8, trois bancs (4 800 parties), seuil z ≥ 2,24 (deux variantes),
+aucun banc < −1,64 ; confirmation graines 9-12 (trois bancs, z ≥ 1,64) ; wasm à fuel égal. Secondaire : défaites
+à la limite. Effet attendu faible (≤ 1,5 point) : un échec au seuil n'est pas une preuve d'inutilité.

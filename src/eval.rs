@@ -128,6 +128,11 @@ pub struct Weights {
     /// distance brute. Nos menaces statiques ne retardent pas un adversaire qui fonce : supposer
     /// qu'il trouvera un passage est plus prudent que le croire bloqué.
     pub safe_self: i32,
+    /// Arbitrage à la limite de coups (R9, `rules::adjudicate`) : sans point marqué, le camp dont
+    /// la pièce la plus avancée a le moins de rangées à franchir gagne. Points accordés au
+    /// vainqueur de l'arbitrage, montant linéairement sur les `adjudge_window` derniers demi-coups.
+    pub adjudge: i32,
+    pub adjudge_window: i32,
 }
 
 impl Default for Weights {
@@ -152,7 +157,7 @@ impl Default for Weights {
 
 impl Weights {
     /// Noms des poids réglables par `set` / `get` (réglage automatique, options du duel).
-    pub const NAMES: [&'static str; 24] = [
+    pub const NAMES: [&'static str; 26] = [
         "value_e",
         "value_v",
         "value_s",
@@ -177,6 +182,8 @@ impl Weights {
         "hole",
         "safe_walls",
         "safe_self",
+        "adjudge",
+        "adjudge_window",
     ];
 
     fn slot(&mut self, name: &str) -> Option<&mut i32> {
@@ -205,6 +212,8 @@ impl Weights {
             "hole" => &mut self.hole,
             "safe_walls" => &mut self.safe_walls,
             "safe_self" => &mut self.safe_self,
+            "adjudge" => &mut self.adjudge,
+            "adjudge_window" => &mut self.adjudge_window,
             _ => return None,
         })
     }
@@ -274,6 +283,8 @@ impl Weights {
             hole: 0,
             safe_walls: 0,
             safe_self: 0,
+            adjudge: 0,
+            adjudge_window: 40,
         }
     }
 }
@@ -1168,6 +1179,17 @@ impl Eval {
             };
             total += w.hole * (free(side) - free(other));
         }
+        if w.adjudge != 0 {
+            let left = state.move_limit as i32 - state.ply as i32;
+            if left <= w.adjudge_window {
+                let v = match traversal_bot::core::rules::adjudicate(state) {
+                    Some(o) if o == side => 1,
+                    Some(_) => -1,
+                    None => 0,
+                };
+                total += w.adjudge * v * (w.adjudge_window - left.max(0)) / w.adjudge_window.max(1);
+            }
+        }
         if w.tempo_race != 0 && nobody_out {
             let mine = Eval::plies(state, side, sentinel[side as usize - 1]);
             let theirs = Eval::plies(state, other, sentinel[other as usize - 1]);
@@ -1543,6 +1565,22 @@ mod sentinel_tests {
             exit_race: 0,
             ..Weights::sdk()
         }
+    }
+
+    /// Arbitrage : près de la limite de coups, le camp le plus avancé est préféré (et pas avant).
+    #[test]
+    fn adjudication_near_the_move_limit() {
+        // Rouge à 2 rangées de la sortie (rangée 8), Bleu à 5.
+        let pieces = [piece(1, Kind::Explorer, 72), piece(2, Kind::Explorer, 45)];
+        let w = Weights { adjudge: 300, ..nothing() };
+        let e = Eval::new(&FLAT, w);
+        let base = Eval::new(&FLAT, nothing());
+        let at = |ply: u16| State::new(FLAT, &pieces, 1, ply, [0, 0], 0, 200);
+        let gain = |ply: u16| e.evaluate(&at(ply), 1) - base.evaluate(&at(ply), 1);
+        assert_eq!(gain(100), 0);
+        assert_eq!(gain(180), 150);
+        assert_eq!(gain(200 - 1), 300 * 39 / 40);
+        assert_eq!(e.evaluate(&at(180), 2) - base.evaluate(&at(180), 2), -150);
     }
 
     /// Une Avant-garde seule (Force 2) ne prend une Sentinelle (défense 3) qu'avec la charge :
