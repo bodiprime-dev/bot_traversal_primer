@@ -1108,3 +1108,14 @@ contre 88 dans les 24 victoires ; `iKpyx58M` (Mont Blanc) : ~90 allers-retours d
 Correction : une position déjà vue dans la partie (à notre trait ou après notre coup) ou sur le chemin de la
 recherche vaut 0. Variante unique RP (`--repeat 1`), référence `stage/SB_*`, graines 5-8, trois bancs, seuil
 z ≥ 1,96, aucun banc < −1,64 ; confirmation graines 9-12 z ≥ 1,64 ; wasm. Lancé après le test `adjudge`.
+
+### Résultats `adjudge` — NON ADOPTÉ (2026-10-26)
+
+| variante | MB | V1 | FO | cumul 4 800 |
+|---|---|---|---|---|
+| A3 (300) | −0,19 | −0,16 | −0,12 | −0,16 ± 0,18, z = −1,71 |
+| A10 (1 000) | −0,25 | −0,38 (z = −2,06) | −0,38 | −0,33 ± 0,23, z = −2,95 |
+
+Parties à la limite : 104 (réf.) -> 103 (A3) / 91 (A10) ; victoires à la limite 57 -> 53 / 42 ; défaites 37 -> 39 / 39.
+Le terme ne change presque rien (peu de parties concernées) et ce qu'il change est légèrement négatif : il pousse
+à avancer une pièce exposée en fin de partie. Coupé (0).
