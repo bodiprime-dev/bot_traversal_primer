@@ -137,6 +137,9 @@ fn main() {
     if args.iter().any(|a| a == "--race") {
         cfg.race = true;
     }
+    if args.iter().any(|a| a == "--sentinel-beam") {
+        cfg.sentinel_beam = true;
+    }
     let only = opt("--only");
     let mut games = Vec::new();
     for line in text.lines().filter(|l| !l.trim().is_empty()) {

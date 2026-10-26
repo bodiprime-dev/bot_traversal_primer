@@ -36,6 +36,9 @@ pub struct Config {
     /// Coups de course exemptés du faisceau : une Sentinelle qui se pose sur une case d'où elle
     /// sort au tour suivant est toujours examinée (sinon la sortie adverse peut être élaguée).
     pub race: bool,
+    /// Tous les coups de Sentinelle sont exemptés du faisceau (une Sentinelle qui en « ombre »
+    /// une autre est souvent la seule défense, et le faisceau peut l'élaguer).
+    pub sentinel_beam: bool,
     /// Poids de l'évaluation.
     pub weights: Weights,
     /// Coups de parade (vers une case d'un plus court chemin de la Sentinelle adverse, voir
@@ -66,6 +69,7 @@ impl Default for Config {
             max_depth: 16,
             beam: 20,
             race: false,
+            sentinel_beam: false,
             weights: Weights::default(),
             guard_root: 0,
             guard_tree: 0,
@@ -236,7 +240,8 @@ impl Piolet {
             return none;
         }
         let ctx = Ctx::with_insight(&state.heights, 3, Tuning::default());
-        let eval = Eval::new(&state.heights, self.cfg.weights);
+        let mut eval = Eval::new(&state.heights, self.cfg.weights);
+        eval.root = state.to_move;
         let mut s = Search {
             owner: self,
             ctx: &ctx,
@@ -383,6 +388,8 @@ impl Search<'_> {
                     && !guards.contains(&m)
                     && !hunts.contains(&m)
                     && !(self.owner.cfg.race && self.eval.race_move(state, &m))
+                    && !(self.owner.cfg.sentinel_beam
+                        && state.piece(m.piece).kind == Kind::Sentinel)
                 {
                     scored.push((-INF, (m, idx)));
                     continue;
@@ -525,7 +532,10 @@ impl Search<'_> {
                         guarded += 1;
                     } else if hunted < hunt && self.eval.hunts(state, m) {
                         hunted += 1;
-                    } else if self.owner.cfg.race && self.eval.race_move(state, m) {
+                    } else if (self.owner.cfg.race && self.eval.race_move(state, m))
+                        || (self.owner.cfg.sentinel_beam
+                            && state.piece(m.piece).kind == Kind::Sentinel)
+                    {
                     } else {
                         continue;
                     }

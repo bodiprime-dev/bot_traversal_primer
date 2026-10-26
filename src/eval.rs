@@ -124,6 +124,10 @@ pub struct Weights {
     /// attaquant « atteint » une case à travers ses propres pièces, et près d'un camp groupé
     /// toutes les cases paraissent dangereuses (Sentinelle adverse jugée sans chemin sûr).
     pub safe_walls: i32,
+    /// Distance sûre pour nos seules Sentinelles (0 / 1) : celles de l'adversaire gardent leur
+    /// distance brute. Nos menaces statiques ne retardent pas un adversaire qui fonce : supposer
+    /// qu'il trouvera un passage est plus prudent que le croire bloqué.
+    pub safe_self: i32,
 }
 
 impl Default for Weights {
@@ -148,7 +152,7 @@ impl Default for Weights {
 
 impl Weights {
     /// Noms des poids réglables par `set` / `get` (réglage automatique, options du duel).
-    pub const NAMES: [&'static str; 23] = [
+    pub const NAMES: [&'static str; 24] = [
         "value_e",
         "value_v",
         "value_s",
@@ -172,6 +176,7 @@ impl Weights {
         "trade_adv",
         "hole",
         "safe_walls",
+        "safe_self",
     ];
 
     fn slot(&mut self, name: &str) -> Option<&mut i32> {
@@ -199,6 +204,7 @@ impl Weights {
             "trade_adv" => &mut self.trade_adv,
             "hole" => &mut self.hole,
             "safe_walls" => &mut self.safe_walls,
+            "safe_self" => &mut self.safe_self,
             _ => return None,
         })
     }
@@ -267,6 +273,7 @@ impl Weights {
             trade_adv: 0,
             hole: 0,
             safe_walls: 0,
+            safe_self: 0,
         }
     }
 }
@@ -473,6 +480,8 @@ pub struct Eval {
     /// (relief seul : marche de coût ≤ Mouvement, plus diagonales et bonds de l'Explorateur),
     /// si `cover`.
     reach: Option<Box<[[u128; SQUARES]; 3]>>,
+    /// Camp de Piolet dans la recherche en cours (pour `safe_self`) ; 0 : inconnu.
+    pub root: u8,
     /// Tables de la distance sûre, si `safe_race`.
     safe: Option<Box<SafeTables>>,
 }
@@ -553,6 +562,7 @@ impl Eval {
         });
         Eval {
             costs: [exit_costs(heights, 1), exit_costs(heights, 2)],
+            root: 0,
             exact,
             w,
             buf: RefCell::new(Vec::with_capacity(64)),
@@ -1022,7 +1032,7 @@ impl Eval {
         if self.w.safe_race != 0 {
             // Une Sentinelle ne compte que ses tours SÛRS (jamais moins que sa distance brute).
             for (i, p) in state.pieces().iter().enumerate() {
-                if p.kind == Kind::Sentinel {
+                if p.kind == Kind::Sentinel && (self.w.safe_self == 0 || p.owner == self.root) {
                     turns[i] =
                         turns[i].max(self.safe_turns(state, i as u8, turns[i] + self.w.safe_race));
                 }
