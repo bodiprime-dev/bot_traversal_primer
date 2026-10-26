@@ -33,6 +33,9 @@ pub struct Config {
     /// 20 / illimité donnent 43 / 56 / 60 / 69 / 61 % (le tri des coups calmes ne regarde que
     /// l'avancée : trop étroit, les coups d'escorte et de défense ne sont jamais vus).
     pub beam: usize,
+    /// Coups de course exemptés du faisceau : une Sentinelle qui se pose sur une case d'où elle
+    /// sort au tour suivant est toujours examinée (sinon la sortie adverse peut être élaguée).
+    pub race: bool,
     /// Poids de l'évaluation.
     pub weights: Weights,
     /// Coups de parade (vers une case d'un plus court chemin de la Sentinelle adverse, voir
@@ -62,6 +65,7 @@ impl Default for Config {
         Config {
             max_depth: 16,
             beam: 20,
+            race: false,
             weights: Weights::default(),
             guard_root: 0,
             guard_tree: 0,
@@ -378,6 +382,7 @@ impl Search<'_> {
                     && n >= beam + 6
                     && !guards.contains(&m)
                     && !hunts.contains(&m)
+                    && !(self.owner.cfg.race && self.eval.race_move(state, &m))
                 {
                     scored.push((-INF, (m, idx)));
                     continue;
@@ -520,6 +525,7 @@ impl Search<'_> {
                         guarded += 1;
                     } else if hunted < hunt && self.eval.hunts(state, m) {
                         hunted += 1;
+                    } else if self.owner.cfg.race && self.eval.race_move(state, m) {
                     } else {
                         continue;
                     }

@@ -120,6 +120,10 @@ pub struct Weights {
     /// Poids de l'échange, espace : points par case de la moitié adverse qu'aucune pièce adverse
     /// ne peut attaquer (le trou qu'une pièce prise laisse derrière elle), moins l'inverse.
     pub hole: i32,
+    /// Distance sûre : les pièces bloquent la marche des attaquants (0 / 1). Sans cela, un
+    /// attaquant « atteint » une case à travers ses propres pièces, et près d'un camp groupé
+    /// toutes les cases paraissent dangereuses (Sentinelle adverse jugée sans chemin sûr).
+    pub safe_walls: i32,
 }
 
 impl Default for Weights {
@@ -144,7 +148,7 @@ impl Default for Weights {
 
 impl Weights {
     /// Noms des poids réglables par `set` / `get` (réglage automatique, options du duel).
-    pub const NAMES: [&'static str; 22] = [
+    pub const NAMES: [&'static str; 23] = [
         "value_e",
         "value_v",
         "value_s",
@@ -167,6 +171,7 @@ impl Weights {
         "safe_race",
         "trade_adv",
         "hole",
+        "safe_walls",
     ];
 
     fn slot(&mut self, name: &str) -> Option<&mut i32> {
@@ -193,6 +198,7 @@ impl Weights {
             "safe_race" => &mut self.safe_race,
             "trade_adv" => &mut self.trade_adv,
             "hole" => &mut self.hole,
+            "safe_walls" => &mut self.safe_walls,
             _ => return None,
         })
     }
@@ -260,6 +266,7 @@ impl Weights {
             safe_race: 0,
             trade_adv: 0,
             hole: 0,
+            safe_walls: 0,
         }
     }
 }
@@ -326,6 +333,65 @@ fn walk(heights: &[u8; SQUARES], from: u8, budget: u8) -> [u8; SQUARES] {
         }
     }
     dist
+}
+
+/// Comme `walk`, mais les cases de `occupied` arrêtent la marche : on peut y arriver (pour une
+/// attaque), pas les traverser (R4 : aucune pièce ne se traverse).
+fn walk_through(heights: &[u8; SQUARES], from: u8, budget: u8, occupied: u128) -> [u8; SQUARES] {
+    let mut dist = [u8::MAX; SQUARES];
+    dist[from as usize] = 0;
+    let mut buckets: [Vec<u8>; 6] = Default::default();
+    buckets[0].push(from);
+    for d in 0..=budget as usize {
+        let mut k = 0;
+        while k < buckets[d].len() {
+            let cur = buckets[d][k];
+            k += 1;
+            if dist[cur as usize] as usize != d || (cur != from && occupied >> cur & 1 == 1) {
+                continue;
+            }
+            for &nb in neighbors_of(cur) {
+                let nd = d + step_cost(heights, cur, nb) as usize;
+                if nd <= budget as usize && nd < dist[nb as usize] as usize {
+                    dist[nb as usize] = nd as u8;
+                    buckets[nd].push(nb);
+                }
+            }
+        }
+    }
+    dist
+}
+
+/// Marches des pièces adverses, calculées à la demande (pièces comme obstacles).
+struct Walks {
+    occupied: u128,
+    done: u16,
+    dist: [[u8; SQUARES]; MAX_PIECES],
+}
+
+impl Walks {
+    fn new(state: &State, mover: u8) -> Walks {
+        let mut occupied = 0u128;
+        for (i, q) in state.pieces().iter().enumerate() {
+            if i as u8 != mover {
+                occupied |= 1 << q.sq;
+            }
+        }
+        Walks {
+            occupied,
+            done: 0,
+            dist: [[u8::MAX; SQUARES]; MAX_PIECES],
+        }
+    }
+
+    fn get(&mut self, state: &State, qi: usize) -> &[u8; SQUARES] {
+        if self.done >> qi & 1 == 0 {
+            let q = state.piece(qi as u8);
+            self.dist[qi] = walk_through(&state.heights, q.sq, q.kind.movement(), self.occupied);
+            self.done |= 1 << qi;
+        }
+        &self.dist[qi]
+    }
 }
 
 /// Tours minimaux pour sortir depuis chaque case, pour une pièce `kind` de `owner`, sur le
@@ -616,15 +682,15 @@ impl Eval {
     /// voisines de la case ; défense : 3 + 1 par allié voisin. Marche sur le relief seul (les pièces
     /// sur le chemin de l'attaquant sont ignorées) ; diagonales et bonds de l'Explorateur compris.
     /// `mover` : indice de la Sentinelle qui se déplace (elle ne se soutient pas elle-même).
-    #[cfg(test)]
-    fn danger(&self, state: &State, mover: u8) -> u128 {
+    pub fn danger(&self, state: &State, mover: u8) -> u128 {
+        let mut walks = Walks::new(state, mover);
         (0..SQUARES as u8)
-            .filter(|&s| self.threatened(state, mover, s))
+            .filter(|&s| self.threatened(state, mover, s, &mut walks))
             .fold(0, |m, s| m | 1 << s)
     }
 
     /// La case `s` fait-elle partie de `danger` ? (calcul case par case, à la demande)
-    fn threatened(&self, state: &State, mover: u8, s: u8) -> bool {
+    fn threatened(&self, state: &State, mover: u8, s: u8, walks: &mut Walks) -> bool {
         let tables = self.safe.as_ref().expect("safe_race");
         let owner = state.piece(mover).owner;
         let h = &state.heights;
@@ -650,7 +716,25 @@ impl Eval {
             if tables.hit[k][q.sq as usize] >> s & 1 == 0 {
                 continue;
             }
-            let d = tables.walk[k][q.sq as usize][s as usize];
+            let d = if self.w.safe_walls != 0 {
+                let d = walks.get(state, qi)[s as usize];
+                // Diagonale ou bond de l'Explorateur (le bond ne passe pas par-dessus une pièce).
+                let special = q.kind == Kind::Explorer && {
+                    let (qx, qy) = ((q.sq % SIZE as u8) as i32, (q.sq / SIZE as u8) as i32);
+                    let (sx, sy) = ((s % SIZE as u8) as i32, (s / SIZE as u8) as i32);
+                    let (dx, dy) = (sx - qx, sy - qy);
+                    (dx.abs() == 1 && dy.abs() == 1)
+                        || ((dx.abs() + dy.abs() == 2 && (dx == 0 || dy == 0))
+                            && walks.occupied >> ((qy + dy / 2) * SIZE as i32 + qx + dx / 2) & 1
+                                == 0)
+                };
+                if d == u8::MAX && !special {
+                    continue;
+                }
+                d
+            } else {
+                tables.walk[k][q.sq as usize][s as usize]
+            };
             let adjacent = neighbors_of(s).contains(&q.sq);
             let height = (h[q.sq as usize] > h[s as usize]) as i32
                 - (h[q.sq as usize] < h[s as usize]) as i32;
@@ -691,6 +775,7 @@ impl Eval {
             .fold(0u128, |m, q| {
                 m | tables.hit[q.kind.strength() as usize - 1][q.sq as usize]
             });
+        let mut walks = Walks::new(state, mover);
         let mut frontier = 1u128 << p.sq;
         let mut seen = frontier;
         for t in 1..limit {
@@ -710,7 +795,7 @@ impl Eval {
             while f != 0 {
                 let s = f.trailing_zeros() as u8;
                 f &= f - 1;
-                if self.threatened(state, mover, s) {
+                if self.threatened(state, mover, s, &mut walks) {
                     next &= !(1 << s);
                 }
             }
@@ -844,6 +929,38 @@ impl Eval {
     }
 
     /// Tours (au mieux) pour sortir, pour chaque pièce, obstacles compris.
+    /// Coup de course : une Sentinelle se pose sur une case d'où elle sort au tour suivant.
+    pub fn race_move(&self, state: &State, m: &Move) -> bool {
+        m.kind == MoveKind::Move && {
+            let p = state.piece(m.piece);
+            p.kind == Kind::Sentinel && self.exit_mask(p.owner) >> m.to & 1 == 1
+        }
+    }
+
+    /// Diagnostic : cases d'où une Sentinelle de `owner` sort en un tour.
+    pub fn exit_mask(&self, owner: u8) -> u128 {
+        self.safe.as_ref().map_or(0, |t| t.exit[owner as usize - 1])
+    }
+
+    /// Diagnostic : pour chaque Sentinelle, (camp, case, tours bruts, tours sûrs sans plafond).
+    pub fn sentinel_report(&self, state: &State) -> Vec<(u8, u8, i32, i32)> {
+        let turns = self.piece_turns(state);
+        state
+            .pieces()
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.kind == Kind::Sentinel)
+            .map(|(i, p)| {
+                let safe = if self.safe.is_some() {
+                    self.safe_turns(state, i as u8, 15)
+                } else {
+                    -1
+                };
+                (p.owner, p.sq, turns[i], safe)
+            })
+            .collect()
+    }
+
     pub(crate) fn piece_turns(&self, state: &State) -> [i32; MAX_PIECES] {
         let w = &self.w;
         let mut out = [0; MAX_PIECES];
