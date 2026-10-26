@@ -73,7 +73,7 @@ fn find(s: &State, token: &str) -> Option<Move> {
         'S' => Kind::Sentinel,
         _ => return None,
     };
-    let rest = &token[1..];
+    let rest = token[1..].trim_end_matches(|c: char| !c.is_ascii_alphanumeric());
     let (from, to) = rest.split_once(['-', 'x']).unwrap_or((rest, ""));
     let (from, to) = (square(from)?, square(to));
     legal_moves(s).into_iter().find(|m| {
@@ -156,6 +156,39 @@ fn main() {
         tokens.len(),
         found.iter().map(|(b, _)| b).collect::<Vec<_>>()
     );
+    let mut cfg = Config::default();
+    if let Some(w) = opt("--w") {
+        cfg.weights.apply(&w).expect("--w");
+    }
+    // `--follow N` : un seul Piolet (table de transposition conservée, comme dans l'arène) joue
+    // chaque coup du camp `--side` (2 = Bleu) à N nœuds ; on compare à ce qui a été joué.
+    if let Some(n) = opt("--follow").map(|n| n.parse::<u64>().expect("--follow")) {
+        let side: u8 = opt("--side").map_or(2, |s| s.parse().expect("--side"));
+        for (b, game) in &found {
+            let mut bot = Piolet::new(cfg.clone());
+            let mut same = 0;
+            let mut line = String::new();
+            for (ply, (s, played)) in game.iter().enumerate() {
+                if s.to_move != side {
+                    continue;
+                }
+                let moves = legal_moves(s);
+                CALLS_LEFT.with(|c| c.set(n.div_ceil(64)));
+                let pick = bot.choose(s, &moves, out_of_nodes);
+                let m = &moves[pick.index];
+                let ok = m.piece == played.piece && m.to == played.to && m.kind == played.kind;
+                same += ok as u32;
+                line += &format!(
+                    "\n  {ply:>3} joué {:<10} Piolet {:<10} {}",
+                    show(s, played),
+                    show(s, m),
+                    if ok { "=" } else { "≠" }
+                );
+            }
+            println!("\ncarte {b} : {same} coups identiques{line}");
+        }
+        return;
+    }
     let Some(ply) = opt("--ply").map(|p| p.parse::<usize>().expect("--ply")) else {
         return;
     };
@@ -182,7 +215,7 @@ fn main() {
         println!();
         let moves = legal_moves(s);
         for &n in &budgets {
-            let mut bot = Piolet::new(Config::default());
+            let mut bot = Piolet::new(cfg.clone());
             CALLS_LEFT.with(|c| c.set(n.div_ceil(64)));
             let pick = bot.choose(s, &moves, out_of_nodes);
             let mut scores: Vec<(usize, i32)> = bot.root_scores().to_vec();
