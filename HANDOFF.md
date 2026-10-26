@@ -1067,3 +1067,13 @@ Bancs (5 000 nœuds, `--open 6`, 400 parties appariées par graine) :
 | SBSS | −3,2 | −16,4 | −9,8, z = −6,8 | non |
 
 `safe_self` est très mauvais : la distance sûre de l'adversaire compte autant que la nôtre. k = 2 -> seuil 2,24.
+
+#### Étage 2 (graines neuves 5-8, 1 600 parties par banc) — seuil 2,24
+
+| variante | MB | V1 (terrains réels) | Fonceur (terrains réels) | cumul 4 800 |
+|---|---|---|---|---|
+| SB (`sentinel_beam`) | +4,7 ± 2,4 | +6,1 ± 2,9 | +8,8 ± 3,3 | **+6,52 ± 1,67, z = 7,82** |
+| R (`race`) | +3,4 ± 1,2 | +2,3 ± 1,3 | +2,5 ± 1,4 | +2,75 ± 0,74, z = 7,39 |
+
+Les deux passent, sur chaque banc. Retenue : SB (plus grand écart). Étape 3 : wasm à fuel égal
+(`sb.wasm` contre la version adoptée, contre la v1 et contre Mont Blanc).
