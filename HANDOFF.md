@@ -1056,3 +1056,14 @@ Bancs (5 000 nœuds, `--open 6`, 400 parties appariées par graine) :
 2. Étage 2 (décision, données neuves) : graines 5-8, bancs MB, V1, FO (4 800 parties). Seuil Bonferroni selon
    le nombre k de variantes qualifiées (k = 1 : 1,96 ; 2 : 2,24 ; 3 : 2,39 ; 4 : 2,50) ; aucun banc < −1,64.
 3. Wasm à fuel égal : face-à-face contre la version adoptée, contre la v1 et contre Mont Blanc.
+
+#### Étage 1 (graines 1-2, 800 parties par banc)
+
+| variante | MB | V1 (terrains réels) | cumul 1 600 | étage 2 ? |
+|---|---|---|---|---|
+| SB (`sentinel_beam`) | +5,6 ± 3,5 | +9,3 ± 4,1 | **+7,4 ± 2,7, z = 5,58** | oui |
+| R (`race`) | +3,3 ± 1,7 | +1,6 ± 2,2 | +2,4 ± 1,4, z = 3,59 | oui |
+| SS (`safe_self`) | −12,1 | −25,1 | −18,6, z = −12,3 | non |
+| SBSS | −3,2 | −16,4 | −9,8, z = −6,8 | non |
+
+`safe_self` est très mauvais : la distance sûre de l'adversaire compte autant que la nôtre. k = 2 -> seuil 2,24.
