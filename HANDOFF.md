@@ -1039,3 +1039,20 @@ Rival « Fonceur » retenu : `--opp-w "progress_s=40,sentinel_sq=20,tempo_race=5
    Condition supplémentaire : aucun banc significativement négatif (z < −1,64 sur 1 600 parties).
 3. Retenue : plus grand écart parmi celles qui passent ; confirmation graines 5 à 8 (deux bancs), z ≥ 1,64 ;
    puis wasm à fuel égal (face-à-face contre la version adoptée et contre Mont Blanc).
+
+### Remplacé avant tout résultat : protocole en deux étages (2026-10-26)
+
+Le banc `race` / `safe_walls` ci-dessus a été arrêté avant la fin de son premier lot (aucun résultat lu) : le
+second export (40 parties) montre deux défauts plus nets — faux gains par élagage de la défense « en ombre »
+(`ov6vflcj`), adversaire fonceur sous-estimé (`Lm4k1Hpq`) — et la v2 perd 4-6 contre la v1 dans l'arène.
+
+Variantes : SB (`--sentinel-beam 1`), SS (`--w safe_self=1`), SBSS (les deux), R (`--race-moves 1`).
+Bancs (5 000 nœuds, `--open 6`, 400 parties appariées par graine) :
+- MB : Mont Blanc, cartes SDK (références `safeab/r2_s1..4`, `confirm/r2_s5..8`) ;
+- V1 : Piolet v1 (`--opp-w safe_race=0`, 5 000 nœuds), terrains réels `terrains2.txt` ;
+- FO : Fonceur (`--opp-w progress_s=40,sentinel_sq=20,tempo_race=50`), terrains réels (étage 2 seulement).
+
+1. Étage 1 (tri) : graines 1-2, bancs MB et V1. Passe à l'étage 2 si cumul (1 600 parties) z ≥ 1,0.
+2. Étage 2 (décision, données neuves) : graines 5-8, bancs MB, V1, FO (4 800 parties). Seuil Bonferroni selon
+   le nombre k de variantes qualifiées (k = 1 : 1,96 ; 2 : 2,24 ; 3 : 2,39 ; 4 : 2,50) ; aucun banc < −1,64.
+3. Wasm à fuel égal : face-à-face contre la version adoptée, contre la v1 et contre Mont Blanc.
