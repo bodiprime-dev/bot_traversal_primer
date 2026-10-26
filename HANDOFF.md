@@ -1135,3 +1135,10 @@ change pas le coup : c'est une poursuite mutuelle (chaque Sentinelle prend l'aut
 soutien ; quitter la danse pour amener un soutien perd la Sentinelle), que la recherche à profondeur 4 ne résout pas.
 Mesure générale quand même : U15 (`unblock=15`), U40 (`unblock=40`), référence `stage/SB_*`, graines 5-8, trois
 bancs, seuil z ≥ 2,24, aucun banc < −1,64 ; confirmation graines 9-12 ; wasm.
+
+### Résultats `unblock` — NON ADOPTÉ, très nuisible (2026-10-26)
+
+U15 : cumul −25,8 ± 1,8 (MB −19,9 ; V1 −24,7 ; FO −32,9). U40 : −71,6 (5,8 % de score !). La condition « bloquée »
+(distance avec pièces > distance sur le relief) est vraie presque tout le temps (la moindre pièce sur la route
+suffit) : le terme, jusqu'à 2 × 8 × poids points par Sentinelle, attire toutes les pièces autour de nos Sentinelles
+au lieu de jouer. Un terme de « plan » statique ne remplace pas la recherche. Coupé.
