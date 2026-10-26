@@ -140,6 +140,9 @@ fn main() {
     if args.iter().any(|a| a == "--sentinel-beam") {
         cfg.sentinel_beam = true;
     }
+    if args.iter().any(|a| a == "--repeat") {
+        cfg.repeat = true;
+    }
     if args.iter().any(|a| a == "--no-sentinel-beam") {
         cfg.sentinel_beam = false;
     }

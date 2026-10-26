@@ -1099,3 +1099,12 @@ Variantes : A3 (`adjudge=300`), A10 (`adjudge=1000`). Référence : version adop
 `stage/SB_{mb,v1,fo}_s5..8`. Mesure : graines 5-8, trois bancs (4 800 parties), seuil z ≥ 2,24 (deux variantes),
 aucun banc < −1,64 ; confirmation graines 9-12 (trois bancs, z ≥ 1,64) ; wasm à fuel égal. Secondaire : défaites
 à la limite. Effet attendu faible (≤ 1,5 point) : un échec au seuil n'est pas une preuve d'inutilité.
+
+## Répétitions (`Config::repeat`) — protocole fixé AVANT les résultats (2026-10-26)
+
+Troisième export : allers-retours (une pièce revient sur sa case en ≤ 4 demi-coups) 223 dans les 16 défaites
+contre 88 dans les 24 victoires ; `iKpyx58M` (Mont Blanc) : ~90 allers-retours de Sentinelles qui s'« ombrent »
+(a8/c8 contre a10/c10) pendant 180 demi-coups, perdu à l'arbitrage alors que Piolet s'évaluait à +395.
+Correction : une position déjà vue dans la partie (à notre trait ou après notre coup) ou sur le chemin de la
+recherche vaut 0. Variante unique RP (`--repeat 1`), référence `stage/SB_*`, graines 5-8, trois bancs, seuil
+z ≥ 1,96, aucun banc < −1,64 ; confirmation graines 9-12 z ≥ 1,64 ; wasm. Lancé après le test `adjudge`.

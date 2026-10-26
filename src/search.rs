@@ -39,6 +39,10 @@ pub struct Config {
     /// Tous les coups de Sentinelle sont exemptés du faisceau (une Sentinelle qui en « ombre »
     /// une autre est souvent la seule défense, et le faisceau peut l'élaguer).
     pub sentinel_beam: bool,
+    /// Répétitions : une position déjà vue dans la partie (à notre trait ou après notre coup) ou
+    /// sur le chemin de la recherche vaut 0 (nulle). Le jeu n'a pas de règle de répétition, mais
+    /// répéter ne fait pas progresser : en avance, Piolet cherche autre chose qu'un aller-retour.
+    pub repeat: bool,
     /// Poids de l'évaluation.
     pub weights: Weights,
     /// Coups de parade (vers une case d'un plus court chemin de la Sentinelle adverse, voir
@@ -72,6 +76,7 @@ impl Default for Config {
             // Adopté : +6,5 points sur 4 800 parties neuves (z = 7,8) ; wasm à fuel égal 58,1 %
             // contre la version précédente, 89,5 % contre Mont Blanc (avant : 79,9 %).
             sentinel_beam: true,
+            repeat: false,
             weights: Weights::default(),
             guard_root: 0,
             guard_tree: 0,
@@ -135,6 +140,8 @@ pub struct Piolet {
     /// fournie, score du point de vue du camp au trait), du meilleur au moins bon. Les coups
     /// élagués par le faisceau valent `-INF` (`Pick::UNSEARCHED`).
     root_scores: Vec<(usize, i32)>,
+    /// Positions de la partie (clés), pour `repeat`.
+    game: Vec<u64>,
 }
 
 fn splitmix(state: &mut u64) -> u64 {
@@ -163,6 +170,7 @@ impl Piolet {
             tt: vec![EMPTY; 1 << TT_BITS],
             zob,
             last_ply: None,
+            game: Vec::new(),
             last_heights: None,
             history: vec![0; 2 * 100 * 100],
             killers: vec![[None; 2]; MAX_PLY],
@@ -223,6 +231,7 @@ impl Piolet {
             _ => true,
         };
         if fresh {
+            self.game.clear();
             self.tt.iter_mut().for_each(|e| *e = EMPTY);
             self.history.iter_mut().for_each(|h| *h = 0);
         } else {
@@ -251,8 +260,15 @@ impl Piolet {
             stop,
             nodes: 0,
             root_ply: state.ply,
+            path: Vec::with_capacity(64),
         };
-        s.root(state, moves)
+        let pick = s.root(state, moves);
+        if self.cfg.repeat {
+            let key = self.hash(state);
+            let child = self.hash(&apply_move(state, &moves[pick.index]));
+            self.game.extend([key, child]);
+        }
+        pick
     }
 }
 
@@ -264,6 +280,8 @@ struct Search<'a> {
     nodes: u64,
     /// Demi-coup de la racine : `state.ply - root_ply` est la distance à la racine.
     root_ply: u16,
+    /// Clés des positions du chemin en cours (pour `repeat`).
+    path: Vec<u64>,
 }
 
 impl Search<'_> {
@@ -471,7 +489,21 @@ impl Search<'_> {
         };
     }
 
-    fn negamax(
+    fn negamax(&mut self, state: &State, depth: u8, alpha: i32, beta: i32) -> Result<i32, Timeout> {
+        if !self.owner.cfg.repeat || state.over || state.ply == self.root_ply {
+            return self.negamax_inner(state, depth, alpha, beta);
+        }
+        let key = self.owner.hash(state);
+        if self.path.contains(&key) || self.owner.game.contains(&key) {
+            return Ok(0);
+        }
+        self.path.push(key);
+        let r = self.negamax_inner(state, depth, alpha, beta);
+        self.path.pop();
+        r
+    }
+
+    fn negamax_inner(
         &mut self,
         state: &State,
         depth: u8,

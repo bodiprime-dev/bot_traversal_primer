@@ -335,6 +335,7 @@ fn main() {
         hunt: arg(&args, "--hunt", 0) as usize,
         history: arg(&args, "--history", Config::default().history as u64) != 0,
         race: arg(&args, "--race-moves", Config::default().race as u64) != 0,
+        repeat: arg(&args, "--repeat", Config::default().repeat as u64) != 0,
         sentinel_beam: arg(
             &args,
             "--sentinel-beam",
