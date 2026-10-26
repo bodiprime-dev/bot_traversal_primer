@@ -1077,3 +1077,13 @@ Bancs (5 000 nœuds, `--open 6`, 400 parties appariées par graine) :
 
 Les deux passent, sur chaque banc. Retenue : SB (plus grand écart). Étape 3 : wasm à fuel égal
 (`sb.wasm` contre la version adoptée, contre la v1 et contre Mont Blanc).
+
+#### Étape 3, wasm à fuel égal — ADOPTÉ (2026-10-26)
+
+| duel (400 parties) | résultat |
+|---|---|
+| `sentinel_beam` contre la version adoptée (v2) | **58,1 %** (226 V / 13 N / 161 D), Elo +57 ± 35 |
+| `sentinel_beam` contre la v1 | 75,0 % (v2 contre v1 : 71,5 %) |
+| `sentinel_beam` contre Mont Blanc | **89,5 %** (v2 : 79,9 %) |
+
+Aucune faute, fuel moyen 828 à 933 M par coup. `sentinel_beam: true` dans `Config::default()`.

@@ -69,7 +69,9 @@ impl Default for Config {
             max_depth: 16,
             beam: 20,
             race: false,
-            sentinel_beam: false,
+            // Adopté : +6,5 points sur 4 800 parties neuves (z = 7,8) ; wasm à fuel égal 58,1 %
+            // contre la version précédente, 89,5 % contre Mont Blanc (avant : 79,9 %).
+            sentinel_beam: true,
             weights: Weights::default(),
             guard_root: 0,
             guard_tree: 0,
