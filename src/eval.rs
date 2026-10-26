@@ -133,6 +133,12 @@ pub struct Weights {
     /// vainqueur de l'arbitrage, montant linéairement sur les `adjudge_window` derniers demi-coups.
     pub adjudge: i32,
     pub adjudge_window: i32,
+    /// Percer un blocage : pour une Sentinelle dont la distance sûre dépasse la distance brute
+    /// (une pièce adverse lui interdit la route), points par pas de rapprochement (dans un rayon
+    /// de 8, distance de Manhattan) de nos deux pièces non-Sentinelles les plus proches. Un
+    /// soutien voisin augmente sa défense et rouvre la route : la recherche, trop courte pour voir
+    /// la manœuvre entière, a ainsi une pente à suivre au lieu de tourner en rond.
+    pub unblock: i32,
 }
 
 impl Default for Weights {
@@ -157,7 +163,7 @@ impl Default for Weights {
 
 impl Weights {
     /// Noms des poids réglables par `set` / `get` (réglage automatique, options du duel).
-    pub const NAMES: [&'static str; 26] = [
+    pub const NAMES: [&'static str; 27] = [
         "value_e",
         "value_v",
         "value_s",
@@ -184,6 +190,7 @@ impl Weights {
         "safe_self",
         "adjudge",
         "adjudge_window",
+        "unblock",
     ];
 
     fn slot(&mut self, name: &str) -> Option<&mut i32> {
@@ -214,6 +221,7 @@ impl Weights {
             "safe_self" => &mut self.safe_self,
             "adjudge" => &mut self.adjudge,
             "adjudge_window" => &mut self.adjudge_window,
+            "unblock" => &mut self.unblock,
             _ => return None,
         })
     }
@@ -285,6 +293,7 @@ impl Weights {
             safe_self: 0,
             adjudge: 0,
             adjudge_window: 40,
+            unblock: 0,
         }
     }
 }
@@ -508,6 +517,8 @@ struct SafeTables {
     /// `hit[type][case]` : cases qu'une pièce de ce type peut attaquer depuis cette case (marche
     /// dans son Mouvement, plus diagonales et bonds pour l'Explorateur).
     hit: [[u128; SQUARES]; 3],
+    /// Tours de sortie d'une Sentinelle de chaque camp sur le relief seul (sans les pièces).
+    relief: [[u8; SQUARES]; 2],
 }
 
 impl Eval {
@@ -564,11 +575,13 @@ impl Eval {
                     }
                 }
             }
+            let relief = [1u8, 2].map(|o| exact_turns(heights, o, Kind::Sentinel));
             Box::new(SafeTables {
                 walk,
                 turn,
                 exit,
                 hit,
+                relief,
             })
         });
         Eval {
@@ -1040,13 +1053,48 @@ impl Eval {
 
     /// `evaluate_base` avec les tours de sortie par pièce déjà calculés.
     fn evaluate_base_with(&self, state: &State, side: u8, mut turns: [i32; MAX_PIECES]) -> i32 {
+        // Sentinelles bloquées (distance sûre > distance brute), pour `unblock`.
+        let mut blocked = [false; MAX_PIECES];
         if self.w.safe_race != 0 {
             // Une Sentinelle ne compte que ses tours SÛRS (jamais moins que sa distance brute).
             for (i, p) in state.pieces().iter().enumerate() {
                 if p.kind == Kind::Sentinel && (self.w.safe_self == 0 || p.owner == self.root) {
-                    turns[i] =
-                        turns[i].max(self.safe_turns(state, i as u8, turns[i] + self.w.safe_race));
+                    let safe = self.safe_turns(state, i as u8, turns[i] + self.w.safe_race);
+                    turns[i] = turns[i].max(safe);
+                    // Bloquée : plus loin de la sortie que sur le relief seul (pièce sur la route
+                    // ou case d'arrivée menacée).
+                    let tables = self.safe.as_ref().expect("safe_race");
+                    blocked[i] =
+                        turns[i] > tables.relief[p.owner as usize - 1][p.sq as usize] as i32;
                 }
+            }
+        }
+        let mut unblock = 0;
+        if self.w.unblock != 0 {
+            let xy = |sq: u8| ((sq as usize % SIZE) as i32, (sq as usize / SIZE) as i32);
+            for (i, b) in state
+                .pieces()
+                .iter()
+                .enumerate()
+                .filter(|&(i, _)| blocked[i])
+            {
+                let (bx, by) = xy(b.sq);
+                // Nos deux pièces non-Sentinelles les plus proches de la Sentinelle bloquée.
+                let mut near = [i32::MAX; 2];
+                for (j, q) in state.pieces().iter().enumerate() {
+                    if j != i && q.owner == b.owner && q.kind != Kind::Sentinel {
+                        let (qx, qy) = xy(q.sq);
+                        let d = (qx - bx).abs() + (qy - by).abs();
+                        if d < near[0] {
+                            near = [d, near[0]];
+                        } else if d < near[1] {
+                            near[1] = d;
+                        }
+                    }
+                }
+                let v: i32 =
+                    near.iter().map(|&d| (8 - d.min(8)).max(0)).sum::<i32>() * self.w.unblock;
+                unblock += if b.owner == side { v } else { -v };
             }
         }
         let w = &self.w;
@@ -1179,6 +1227,7 @@ impl Eval {
             };
             total += w.hole * (free(side) - free(other));
         }
+        total += unblock;
         if w.adjudge != 0 {
             let left = state.move_limit as i32 - state.ply as i32;
             if left <= w.adjudge_window {

@@ -1119,3 +1119,19 @@ z ≥ 1,96, aucun banc < −1,64 ; confirmation graines 9-12 z ≥ 1,64 ; wasm. 
 Parties à la limite : 104 (réf.) -> 103 (A3) / 91 (A10) ; victoires à la limite 57 -> 53 / 42 ; défaites 37 -> 39 / 39.
 Le terme ne change presque rien (peu de parties concernées) et ce qu'il change est légèrement négatif : il pousse
 à avancer une pièce exposée en fin de partie. Coupé (0).
+
+### Résultats `repeat` — NON ADOPTÉ (2026-10-26)
+
+MB −1,22 ± 1,08 (z = −2,25) ; V1 −0,19 ; FO +0,09 ; cumul 4 800 : −0,44 ± 0,86 (z = −1,02). Effet pervers : parties
+à la limite 104 -> 170, défaites à la limite 37 -> 124 (une répétition vaut 0 aussi pour le camp en retard, qui la
+recherche ; et le camp en avance, privé de son aller-retour, ne trouve pas mieux). Les allers-retours sont un
+symptôme : il manque un plan pour percer le blocage. Coupé.
+
+## Percer un blocage (`unblock`) — protocole fixé AVANT les résultats (2026-10-26)
+
+Sentinelle « bloquée » : distance (pièces et danger compris) > distance sur le relief seul. Terme : points par pas
+de rapprochement (rayon 8, Manhattan) de nos deux pièces non-Sentinelles les plus proches. Sur `iKpyx58M`, il ne
+change pas le coup : c'est une poursuite mutuelle (chaque Sentinelle prend l'autre si elle est à 2 cases sans
+soutien ; quitter la danse pour amener un soutien perd la Sentinelle), que la recherche à profondeur 4 ne résout pas.
+Mesure générale quand même : U15 (`unblock=15`), U40 (`unblock=40`), référence `stage/SB_*`, graines 5-8, trois
+bancs, seuil z ≥ 2,24, aucun banc < −1,64 ; confirmation graines 9-12 ; wasm.
