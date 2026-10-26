@@ -64,7 +64,11 @@ fn main() {
         .and_then(|i| args.get(i + 1))
         .map_or(5, |v| v.parse().expect("nombre"));
     let mut w = Weights::default();
-    if let Some(o) = args.iter().position(|a| a == "--w").and_then(|i| args.get(i + 1)) {
+    if let Some(o) = args
+        .iter()
+        .position(|a| a == "--w")
+        .and_then(|i| args.get(i + 1))
+    {
         w.apply(o).expect("--w");
     }
     // sums[0] : total ; sums[1 + g] : groupe g.
