@@ -1012,3 +1012,30 @@ points pour le camp qui perd sa Sentinelle et reprend ; avec les variantes : T6 
 Aucune ne passe le seuil (2,50) : pas de confirmation ni de wasm. H8 dégrade nettement. Échanges (graines 1-2,
 parties avec échange) : réf. 43 / 51, T6 47 / 48, H8 38 / 53 (score 58 % sur la graine 2, contre 65 %).
 Les termes restent dans le code, coupés (0).
+
+## Arène réelle (export de 29 parties, 2026-10-26)
+
+Le site génère ses terrains (modes woodlands, valleys, desert, mountains, highlands + graine) : ce ne sont
+pas les 200 cartes du SDK. Notre moteur rejoue les 29 parties sans désaccord de règles ; Piolet retrouve 87 %
+de ses coups (43 % sans `safe_race`) : c'est bien la version adoptée. Bilan : bots maison 9 V / 1 N, Piolet v1
+3-2, Tainted_Soul 1-1, chilling bot 4-6, Tar_Soul 0-2. Défaites : courses de Sentinelles adverses lancées dès
+le premier coup (17 à 37 demi-coups). Diagnostics (`examples/arena_games`) : Sentinelle adverse à 2 tours
+jugée « sans chemin sûr » près de notre camp ; coup de course adverse élagué par le faisceau.
+
+Adversaires de test ajoutés à `duel` : `--terrains data/arena/terrains.txt` (15 terrains réels),
+`--opp rush` (Mont Blanc fonceur naïf : Piolet 97-98 %, trop faible, écarté), `--opp-w` (un autre Piolet).
+Rival « Fonceur » retenu : `--opp-w "progress_s=40,sentinel_sq=20,tempo_race=50"` (Piolet 47,5 % contre lui).
+
+### `race` et `safe_walls` — protocole fixé AVANT les résultats
+
+- R : `--race-moves 1` (coups de Sentinelle vers une case de sortie en un tour exemptés du faisceau)
+- W : `--w safe_walls=1` (les pièces bloquent la marche des attaquants dans la distance sûre)
+- RW : les deux.
+
+1. Deux bancs, 5 000 nœuds, `--open 6`, graines 1 à 4, 400 parties appariées chacune :
+   (a) Mont Blanc, cartes SDK, référence `safeab/r2_s*` ; (b) rival Fonceur (5 000 nœuds), terrains réels,
+   référence rejouée (`railab/ref_s*`).
+2. Mesure principale : cumul des deux bancs (3 200 parties). Seuil : trois variantes -> z ≥ 2,39.
+   Condition supplémentaire : aucun banc significativement négatif (z < −1,64 sur 1 600 parties).
+3. Retenue : plus grand écart parmi celles qui passent ; confirmation graines 5 à 8 (deux bancs), z ≥ 1,64 ;
+   puis wasm à fuel égal (face-à-face contre la version adoptée et contre Mont Blanc).

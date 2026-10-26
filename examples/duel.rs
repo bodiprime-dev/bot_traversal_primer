@@ -104,6 +104,45 @@ fn sprint_move(s: &State, moves: &[Move], turns: &[u8; 100], cost: &[u16; 100]) 
         .copied()
 }
 
+/// Adversaire « Fonceur » (`--opp rush`) : Mont Blanc, sauf qu'il fait courir ses Sentinelles
+/// dès qu'il le peut, comme les bots qui nous battent dans l'arène. Sortir une Sentinelle ; sinon
+/// prendre une Sentinelle adverse ; sinon le coup de Sentinelle qui réduit le plus ses tours
+/// restants, en évitant les cases où elle serait prise au coup suivant (une case prenable compte
+/// 2 tours de plus) ; sinon le coup de Mont Blanc.
+fn rush_move(s: &State, moves: &[Move], turns: &[u8; 100]) -> Move {
+    let sentinel = |m: &&Move| m.kind != MoveKind::Pass && s.piece(m.piece).kind == Kind::Sentinel;
+    if let Some(m) = moves
+        .iter()
+        .filter(sentinel)
+        .find(|m| m.kind == MoveKind::Exit)
+    {
+        return *m;
+    }
+    if let Some(m) = moves.iter().find(|m| {
+        m.kind == MoveKind::Attack
+            && s.at(m.to)
+                .is_some_and(|t| s.piece(t).kind == Kind::Sentinel)
+    }) {
+        return *m;
+    }
+    let best = moves
+        .iter()
+        .filter(sentinel)
+        .filter(|m| matches!(m.kind, MoveKind::Move | MoveKind::Attack))
+        .filter(|m| turns[m.to as usize] < turns[s.piece(m.piece).sq as usize])
+        .min_by_key(|m| {
+            let child = apply_move(s, m);
+            let taken = legal_moves(&child)
+                .iter()
+                .any(|r| r.kind == MoveKind::Attack && r.to == m.to);
+            turns[m.to as usize] as u32 + 2 * taken as u32
+        });
+    match best {
+        Some(m) => *m,
+        None => choose_move(s, MONT_BLANC, &mut Rng::new(s.ply as u64)).mv,
+    }
+}
+
 /// Hasard reproductible (splitmix64).
 fn splitmix(seed: &mut u64) -> u64 {
     *seed = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
@@ -129,8 +168,11 @@ fn play(
     sprint: bool,
     open: &Opening,
     game: usize,
+    rush: bool,
+    opp: Option<(Config, u64)>,
 ) -> Game {
     let mut bot = Piolet::new(cfg);
+    let mut rival = opp.map(|(c, n)| (Piolet::new(c), n));
     let mut s = new_game(board);
     let mut oseed = open
         .seed
@@ -153,6 +195,7 @@ fn play(
         exact_turns(&board, piolet_side, Kind::Sentinel),
         exit_costs(&board, piolet_side),
     );
+    let rush_turns = exact_turns(&board, 3 - piolet_side, Kind::Sentinel);
     let mut exits = Vec::new();
     let mut captures = Vec::new();
     while !s.over {
@@ -165,6 +208,11 @@ fn play(
         } else if s.to_move == piolet_side {
             CALLS_LEFT.with(|c| c.set(nodes.div_ceil(64)));
             moves[bot.choose(&s, &moves, out_of_nodes).index]
+        } else if let Some((r, n)) = rival.as_mut() {
+            CALLS_LEFT.with(|c| c.set(n.div_ceil(64)));
+            moves[r.choose(&s, &moves, out_of_nodes).index]
+        } else if rush {
+            rush_move(&s, &moves, &rush_turns)
         } else {
             choose_move(&s, MONT_BLANC, &mut Rng::new(s.ply as u64)).mv
         };
@@ -286,6 +334,7 @@ fn main() {
         guard_tree: arg(&args, "--guard-tree", 0) as usize,
         hunt: arg(&args, "--hunt", 0) as usize,
         history: arg(&args, "--history", Config::default().history as u64) != 0,
+        race: arg(&args, "--race-moves", Config::default().race as u64) != 0,
         ..Config::default()
     };
     let sprint = arg(&args, "--sprint", 0) != 0;
@@ -293,7 +342,42 @@ fn main() {
         plies: arg(&args, "--open", 0) as u16,
         seed: arg(&args, "--oseed", 1),
     };
-    let boards = boards();
+    // `--terrains F` : une carte par ligne (100 hauteurs séparées par des virgules), par exemple les
+    // terrains générés de l'arène (`scripts/arena_export.py --terrains`), à la place des 200 cartes.
+    let boards: Vec<[u8; 100]> = match args
+        .iter()
+        .position(|a| a == "--terrains")
+        .and_then(|i| args.get(i + 1))
+    {
+        Some(path) => std::fs::read_to_string(path)
+            .expect("--terrains")
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| {
+                let v: Vec<u8> = l
+                    .split(',')
+                    .map(|x| x.trim().parse().expect("hauteur"))
+                    .collect();
+                v.try_into().expect("100 hauteurs")
+            })
+            .collect(),
+        None => boards(),
+    };
+    // `--opp-w "poids"` : l'adversaire est un autre Piolet (ces poids, `--opp-nodes` nœuds).
+    let opp = args
+        .iter()
+        .position(|a| a == "--opp-w")
+        .and_then(|i| args.get(i + 1))
+        .map(|w| {
+            let mut c = Config::default();
+            c.weights.apply(w).expect("--opp-w");
+            (c, arg(&args, "--opp-nodes", nodes))
+        });
+    let rush = args
+        .iter()
+        .position(|a| a == "--opp")
+        .and_then(|i| args.get(i + 1))
+        .is_some_and(|o| o == "rush");
 
     let next = AtomicUsize::new(0);
     let done = Mutex::new(Vec::with_capacity(games));
@@ -315,6 +399,8 @@ fn main() {
                         sprint,
                         &opening,
                         g,
+                        rush,
+                        opp,
                     )
                 };
                 done.lock().unwrap().push(game);
