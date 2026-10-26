@@ -1572,7 +1572,10 @@ mod sentinel_tests {
     fn adjudication_near_the_move_limit() {
         // Rouge à 2 rangées de la sortie (rangée 8), Bleu à 5.
         let pieces = [piece(1, Kind::Explorer, 72), piece(2, Kind::Explorer, 45)];
-        let w = Weights { adjudge: 300, ..nothing() };
+        let w = Weights {
+            adjudge: 300,
+            ..nothing()
+        };
         let e = Eval::new(&FLAT, w);
         let base = Eval::new(&FLAT, nothing());
         let at = |ply: u16| State::new(FLAT, &pieces, 1, ply, [0, 0], 0, 200);

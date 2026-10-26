@@ -335,7 +335,11 @@ fn main() {
         hunt: arg(&args, "--hunt", 0) as usize,
         history: arg(&args, "--history", Config::default().history as u64) != 0,
         race: arg(&args, "--race-moves", Config::default().race as u64) != 0,
-        sentinel_beam: arg(&args, "--sentinel-beam", Config::default().sentinel_beam as u64) != 0,
+        sentinel_beam: arg(
+            &args,
+            "--sentinel-beam",
+            Config::default().sentinel_beam as u64,
+        ) != 0,
         ..Config::default()
     };
     let sprint = arg(&args, "--sprint", 0) != 0;
@@ -370,7 +374,12 @@ fn main() {
         .position(|a| a == "--opp-w")
         .and_then(|i| args.get(i + 1))
         .map(|w| {
-            let mut c = Config::default();
+            // Le rival garde l'ancien faisceau (comme la v1 et les références déjà jouées), sauf
+            // `--opp-sentinel-beam 1`.
+            let mut c = Config {
+                sentinel_beam: arg(&args, "--opp-sentinel-beam", 0) != 0,
+                ..Config::default()
+            };
             c.weights.apply(w).expect("--opp-w");
             (c, arg(&args, "--opp-nodes", nodes))
         });
