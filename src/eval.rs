@@ -833,13 +833,21 @@ impl Eval {
             }
         }
         // Cases qu'au moins une pièce adverse peut attaquer : ailleurs, aucun calcul de danger.
-        let zone = state
-            .pieces()
-            .iter()
-            .filter(|q| q.owner != p.owner)
-            .fold(0u128, |m, q| {
-                m | tables.hit[q.kind.strength() as usize - 1][q.sq as usize]
-            });
+        // Un Explorateur sans soutien attaque à 2 au plus (Force 1, +1 de hauteur) : il ne prend
+        // une Sentinelle (défense 3 au moins) que sur une case voisine d'une autre pièce adverse.
+        // Ailleurs, seules les Avant-gardes et Sentinelles adverses comptent : même résultat.
+        let (mut strong, mut any, mut near) = (0u128, 0u128, 0u128);
+        for q in state.pieces().iter().filter(|q| q.owner != p.owner) {
+            let m = tables.hit[q.kind.strength() as usize - 1][q.sq as usize];
+            any |= m;
+            if q.kind != Kind::Explorer {
+                strong |= m;
+            }
+            for &nb in neighbors_of(q.sq) {
+                near |= 1 << nb;
+            }
+        }
+        let zone = strong | (any & near);
         let mut walks = Walks::new(state, mover);
         walks.set_enemies(state, mover, &tables.hit);
         let mut frontier = 1u128 << p.sq;
