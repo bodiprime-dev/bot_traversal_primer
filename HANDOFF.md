@@ -1142,3 +1142,20 @@ U15 : cumul −25,8 ± 1,8 (MB −19,9 ; V1 −24,7 ; FO −32,9). U40 : −71,6
 (distance avec pièces > distance sur le relief) est vraie presque tout le temps (la moindre pièce sur la route
 suffit) : le terme, jusqu'à 2 × 8 × poids points par Sentinelle, attire toutes les pièces autour de nos Sentinelles
 au lieu de jouer. Un terme de « plan » statique ne remplace pas la recherche. Coupé.
+
+## Vitesse (2026-10-28)
+
+Profil callgrind (`examples/prof`, 10 positions × 3 000 nœuds, décisions identiques à chaque étape, vérifiées par
+`duel --list` sur 64 parties) : 7,56 G -> 4,31 G instructions (−43 %). Évaluation 86 % du coût au départ.
+- distance sûre : pièces adverses et masques d'attaque précalculés par appel, voisinage par coordonnées ;
+- cache d'évaluation 2^16 entrées (clé : position + demi-coup), conservé pendant la partie ;
+- distances de sortie (`piece_costs`) : arrêt dès les pièces atteintes, arêtes inverses et coûts d'entrée précalculés ;
+- filtre exact : un Explorateur sans soutien ne menace pas une Sentinelle (attaque ≤ 2 < 3) ;
+- `tactics::tactical_moves` : sorties et attaques seules pour la quiescence (test d'égalité avec `legal_moves`) ;
+- marches `safe_walls` allouées seulement si l'option est active.
+Essais abandonnés : LTO complète, bulk-memory (sans effet), SIMD (refusé par l'arène), tampons réutilisés
+(+1 % de fuel), cache 2^14/2^18 (±1 %), A* pour les distances de sortie (+65 % d'instructions).
+Mesure wasm exacte : `PIOLET_NODES=2000` (recherche à nœuds fixes) ; 496 k -> ~280-380 k fuel par nœud selon le jeu.
+
+Wasm à fuel égal (400 parties) : contre la v3 de l'arène **59,4 %** (227 V / 21 N / 152 D, Elo +66 ± 35) ;
+contre Mont Blanc 89,8 % (v3 : 89,5 %). Aucune faute.
