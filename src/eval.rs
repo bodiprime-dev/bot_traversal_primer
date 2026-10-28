@@ -393,7 +393,8 @@ fn walk_through(heights: &[u8; SQUARES], from: u8, budget: u8, occupied: u128) -
 struct Walks {
     occupied: u128,
     done: u16,
-    dist: [[u8; SQUARES]; MAX_PIECES],
+    /// Marches calculées à la demande (`safe_walls` seulement) : vide sinon, sans allocation.
+    dist: Vec<[u8; SQUARES]>,
     /// Pièces adverses de la Sentinelle qui se déplace : (indice, cases qu'elle peut attaquer).
     enemies: [(u8, u128); MAX_PIECES],
     n_enemies: usize,
@@ -410,7 +411,7 @@ impl Walks {
         Walks {
             occupied,
             done: 0,
-            dist: [[u8::MAX; SQUARES]; MAX_PIECES],
+            dist: Vec::new(),
             enemies: [(0, 0); MAX_PIECES],
             n_enemies: 0,
         }
@@ -429,6 +430,9 @@ impl Walks {
     }
 
     fn get(&mut self, state: &State, qi: usize) -> &[u8; SQUARES] {
+        if self.dist.is_empty() {
+            self.dist = vec![[u8::MAX; SQUARES]; MAX_PIECES];
+        }
         if self.done >> qi & 1 == 0 {
             let q = state.piece(qi as u8);
             self.dist[qi] = walk_through(&state.heights, q.sq, q.kind.movement(), self.occupied);
