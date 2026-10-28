@@ -45,6 +45,10 @@ const SPEND_PERCENT: u64 = match option_env!("PIOLET_SPEND") {
     None => 50,
 };
 
+fn parse_u64(s: &str) -> u64 {
+    s.parse().expect("PIOLET_NODES : un entier attendu")
+}
+
 const fn parse_percent(s: &str) -> u64 {
     let b = s.as_bytes();
     let mut i = 0;
@@ -63,6 +67,18 @@ static RESERVE: AtomicU64 = AtomicU64::new(0);
 
 fn out_of_fuel() -> bool {
     fuel_left() < RESERVE.load(Ordering::Relaxed)
+}
+
+/// Mesure du coût (pas pour l'arène) : `PIOLET_NODES=3000` arrête la recherche à un nombre de
+/// nœuds fixe, comme les duels natifs. Les décisions ne dépendent plus du fuel : deux versions
+/// aux décisions identiques jouent les mêmes parties, et l'écart de fuel est leur seul coût.
+const NODES: Option<&str> = option_env!("PIOLET_NODES");
+static CALLS_LEFT: AtomicU64 = AtomicU64::new(0);
+
+fn out_of_nodes() -> bool {
+    let left = CALLS_LEFT.load(Ordering::Relaxed).saturating_sub(1);
+    CALLS_LEFT.store(left, Ordering::Relaxed);
+    left == 0 || fuel_left() < 100_000_000
 }
 
 thread_local! {
@@ -88,7 +104,13 @@ fn choose(turn: &Turn) -> usize {
     let pick = BOT.with(|b| {
         let mut b = b.borrow_mut();
         let bot = b.get_or_insert_with(|| Piolet::new(config()));
-        bot.choose(&turn.state, &turn.moves, out_of_fuel)
+        match NODES {
+            Some(n) => {
+                CALLS_LEFT.store(parse_u64(n).div_ceil(64), Ordering::Relaxed);
+                bot.choose(&turn.state, &turn.moves, out_of_nodes)
+            }
+            None => bot.choose(&turn.state, &turn.moves, out_of_fuel),
+        }
     });
     log(&format!(
         "demi-coup {} : profondeur {}, {} nœuds, score {}, fuel restant {} M",
