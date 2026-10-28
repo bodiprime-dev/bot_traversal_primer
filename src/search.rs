@@ -306,7 +306,7 @@ impl Search<'_> {
     /// de la pièce ; captures : 500 + 10 × Force de la cible ; tri stable décroissant). Sans trier
     /// les coups calmes que la recherche de calme n'examine pas : même recherche, moins de calcul.
     fn tactical(state: &State) -> Vec<Move> {
-        let mut keyed: Vec<(i32, Move)> = legal_moves(state)
+        let mut keyed: Vec<(i32, Move)> = crate::tactics::tactical_moves(state)
             .into_iter()
             .filter_map(|m| match m.kind {
                 MoveKind::Exit => Some((1000 + state.piece(m.piece).kind.strength() as i32, m)),

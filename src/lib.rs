@@ -12,6 +12,7 @@
 pub mod eval;
 pub mod nn;
 pub mod search;
+pub mod tactics;
 pub mod tempo;
 
 /// Les 200 cartes officielles (`data/boards.json`, copie de celle du SDK v0.2.0), pour les
