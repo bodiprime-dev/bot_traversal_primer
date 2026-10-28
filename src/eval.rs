@@ -507,6 +507,9 @@ const RING: usize = 8;
 /// seul » se calculent une fois.
 pub struct Eval {
     costs: [[u16; SQUARES]; 2],
+    /// Arêtes inverses du relief : pour chaque case, (voisine, coût de marche de la voisine vers
+    /// elle), et leur nombre. `blocked_costs` part des sorties et remonte ces arêtes.
+    back: Box<[([(u8, u8); 4], u8); SQUARES]>,
     /// `exact[camp][type][case]` (types : Explorateur, Avant-garde, Sentinelle), si
     /// `exact_turns`.
     exact: Option<Box<[[[u8; SQUARES]; 3]; 2]>>,
@@ -601,7 +604,15 @@ impl Eval {
                 relief,
             })
         });
+        let mut back = Box::new([([(0u8, 0u8); 4], 0u8); SQUARES]);
+        for (cur, (edges, n)) in back.iter_mut().enumerate() {
+            for &nb in neighbors_of(cur as u8) {
+                edges[*n as usize] = (nb, step_cost(heights, nb, cur as u8));
+                *n += 1;
+            }
+        }
         Eval {
+            back,
             costs: [exit_costs(heights, 1), exit_costs(heights, 2)],
             root: 0,
             exact,
@@ -879,6 +890,82 @@ impl Eval {
     /// Sentinelle adverse (ou, avec `wall_defense`, toute pièce adverse assez défendue) est un
     /// mur, les autres pièces adverses se franchissent en les abattant (`soft`), traverser
     /// une alliée coûte `ally`.
+    /// `blocked_costs`, exact seulement sur les cases des pièces de `owner` (seules lues par
+    /// `piece_turns`) : la file s'arrête dès qu'elles sont toutes atteintes. Arêtes et coûts
+    /// d'entrée précalculés. Retombe sur `blocked_costs` hors de la file à seaux.
+    fn piece_costs(&self, state: &State, owner: u8) -> [u16; SQUARES] {
+        let w = &self.w;
+        let max_edge = 3 + w.ally.max(w.soft) as usize;
+        if max_edge >= RING || w.wall_defense > 0 {
+            return self.blocked_costs(state, owner);
+        }
+        let row = if owner == 1 { SIZE - 1 } else { 0 };
+        // Coût d'entrée par case (pièce à écarter ou à abattre) ; u8::MAX : mur.
+        let mut enter = [0u8; SQUARES];
+        let mut targets = 0usize;
+        let mut is_target = [false; SQUARES];
+        for p in state.pieces() {
+            enter[p.sq as usize] = if p.owner == owner {
+                if !is_target[p.sq as usize] {
+                    is_target[p.sq as usize] = true;
+                    targets += 1;
+                }
+                w.ally as u8
+            } else if w.soft == 0 || p.kind == Kind::Sentinel {
+                u8::MAX
+            } else {
+                w.soft as u8
+            };
+        }
+        let mut dist = [u16::MAX; SQUARES];
+        let mut ring = [[0u8; SQUARES]; RING];
+        let mut len = [0usize; RING];
+        let mut pending = 0usize;
+        for x in 0..SIZE {
+            let s = row * SIZE + x;
+            if enter[s] != u8::MAX {
+                dist[s] = 1;
+                ring[1][len[1]] = s as u8;
+                len[1] += 1;
+                pending += 1;
+            }
+        }
+        let mut d = 1usize;
+        while pending > 0 && targets > 0 {
+            let slot = d % RING;
+            let mut k = 0;
+            while k < len[slot] {
+                let cur = ring[slot][k] as usize;
+                k += 1;
+                pending -= 1;
+                if dist[cur] as usize != d {
+                    continue; // entrée périmée
+                }
+                if is_target[cur] {
+                    targets -= 1;
+                }
+                let e = enter[cur] as usize;
+                let (edges, n) = &self.back[cur];
+                for &(nb, c) in &edges[..*n as usize] {
+                    if enter[nb as usize] == u8::MAX {
+                        continue;
+                    }
+                    let nd = d + c as usize + e;
+                    if nd < dist[nb as usize] as usize {
+                        dist[nb as usize] = nd as u16;
+                        let s2 = nd % RING;
+                        ring[s2][len[s2]] = nb;
+                        len[s2] += 1;
+                        pending += 1;
+                    }
+                }
+            }
+            len[slot] = 0;
+            d += 1;
+        }
+        dist
+    }
+
     fn blocked_costs(&self, state: &State, owner: u8) -> [u16; SQUARES] {
         let w = &self.w;
         let row = if owner == 1 { SIZE - 1 } else { 0 };
@@ -1019,7 +1106,7 @@ impl Eval {
     pub(crate) fn piece_turns(&self, state: &State) -> [i32; MAX_PIECES] {
         let w = &self.w;
         let mut out = [0; MAX_PIECES];
-        let blocked = [self.blocked_costs(state, 1), self.blocked_costs(state, 2)];
+        let blocked = [self.piece_costs(state, 1), self.piece_costs(state, 2)];
         for (i, p) in state.pieces().iter().enumerate() {
             let free = self.cost(p.owner, p.sq);
             let with =
