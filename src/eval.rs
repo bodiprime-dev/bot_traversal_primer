@@ -394,6 +394,9 @@ struct Walks {
     occupied: u128,
     done: u16,
     dist: [[u8; SQUARES]; MAX_PIECES],
+    /// Pièces adverses de la Sentinelle qui se déplace : (indice, cases qu'elle peut attaquer).
+    enemies: [(u8, u128); MAX_PIECES],
+    n_enemies: usize,
 }
 
 impl Walks {
@@ -408,6 +411,20 @@ impl Walks {
             occupied,
             done: 0,
             dist: [[u8::MAX; SQUARES]; MAX_PIECES],
+            enemies: [(0, 0); MAX_PIECES],
+            n_enemies: 0,
+        }
+    }
+
+    fn set_enemies(&mut self, state: &State, mover: u8, hit: &[[u128; SQUARES]; 3]) {
+        let owner = state.piece(mover).owner;
+        self.n_enemies = 0;
+        for (qi, q) in state.pieces().iter().enumerate() {
+            if q.owner != owner {
+                self.enemies[self.n_enemies] =
+                    (qi as u8, hit[q.kind.strength() as usize - 1][q.sq as usize]);
+                self.n_enemies += 1;
+            }
         }
     }
 
@@ -718,6 +735,7 @@ impl Eval {
     /// `mover` : indice de la Sentinelle qui se déplace (elle ne se soutient pas elle-même).
     pub fn danger(&self, state: &State, mover: u8) -> u128 {
         let mut walks = Walks::new(state, mover);
+        walks.set_enemies(state, mover, &self.safe.as_ref().expect("safe_race").hit);
         (0..SQUARES as u8)
             .filter(|&s| self.threatened(state, mover, s, &mut walks))
             .fold(0, |m, s| m | 1 << s)
@@ -742,20 +760,21 @@ impl Eval {
                 }
             }
         }
-        for (qi, q) in state.pieces().iter().enumerate() {
-            if q.owner == owner || state.at(s) == Some(qi as u8) {
+        let (sx, sy) = ((s % SIZE as u8) as i32, (s / SIZE as u8) as i32);
+        let target = state.at(s);
+        for e in 0..walks.n_enemies {
+            let (qi, mask) = walks.enemies[e];
+            if mask >> s & 1 == 0 || target == Some(qi) {
                 continue;
             }
+            let qi = qi as usize;
+            let q = state.piece(qi as u8);
             let k = q.kind.strength() as usize - 1;
-            if tables.hit[k][q.sq as usize] >> s & 1 == 0 {
-                continue;
-            }
             let d = if self.w.safe_walls != 0 {
                 let d = walks.get(state, qi)[s as usize];
                 // Diagonale ou bond de l'Explorateur (le bond ne passe pas par-dessus une pièce).
                 let special = q.kind == Kind::Explorer && {
                     let (qx, qy) = ((q.sq % SIZE as u8) as i32, (q.sq / SIZE as u8) as i32);
-                    let (sx, sy) = ((s % SIZE as u8) as i32, (s / SIZE as u8) as i32);
                     let (dx, dy) = (sx - qx, sy - qy);
                     (dx.abs() == 1 && dy.abs() == 1)
                         || ((dx.abs() + dy.abs() == 2 && (dx == 0 || dy == 0))
@@ -769,7 +788,8 @@ impl Eval {
             } else {
                 tables.walk[k][q.sq as usize][s as usize]
             };
-            let adjacent = neighbors_of(s).contains(&q.sq);
+            let (qx, qy) = ((q.sq % SIZE as u8) as i32, (q.sq / SIZE as u8) as i32);
+            let adjacent = (qx - sx).abs() + (qy - sy).abs() == 1;
             let height = (h[q.sq as usize] > h[s as usize]) as i32
                 - (h[q.sq as usize] < h[s as usize]) as i32;
             let charge = (q.kind == Kind::Vanguard && d == 4) as i32;
@@ -810,6 +830,7 @@ impl Eval {
                 m | tables.hit[q.kind.strength() as usize - 1][q.sq as usize]
             });
         let mut walks = Walks::new(state, mover);
+        walks.set_enemies(state, mover, &tables.hit);
         let mut frontier = 1u128 << p.sq;
         let mut seen = frontier;
         for t in 1..limit {
