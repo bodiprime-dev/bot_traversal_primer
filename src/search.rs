@@ -142,7 +142,14 @@ pub struct Piolet {
     root_scores: Vec<(usize, i32)>,
     /// Positions de la partie (clés), pour `repeat`.
     game: Vec<u64>,
+    /// Cache d'évaluation : (clé de la position mêlée au demi-coup, évaluation du camp au trait).
+    /// L'évaluation ne dépend que de la position et du demi-coup (relief et poids fixes pendant
+    /// la partie) : le cache sert d'une itération et d'un coup à l'autre.
+    ecache: Vec<(u64, i32)>,
 }
+
+/// Entrées du cache d'évaluation (puissance de 2).
+const ECACHE: usize = 1 << 16;
 
 fn splitmix(state: &mut u64) -> u64 {
     *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
@@ -171,6 +178,7 @@ impl Piolet {
             zob,
             last_ply: None,
             game: Vec::new(),
+            ecache: vec![(0, 0); ECACHE],
             last_heights: None,
             history: vec![0; 2 * 100 * 100],
             killers: vec![[None; 2]; MAX_PLY],
@@ -232,6 +240,7 @@ impl Piolet {
         };
         if fresh {
             self.game.clear();
+            self.ecache.iter_mut().for_each(|e| *e = (0, 0));
             self.tt.iter_mut().for_each(|e| *e = EMPTY);
             self.history.iter_mut().for_each(|h| *h = 0);
         } else {
@@ -489,6 +498,19 @@ impl Search<'_> {
         };
     }
 
+    /// Évaluation du camp au trait, par le cache.
+    fn evaluate(&mut self, state: &State) -> i32 {
+        let key =
+            (self.owner.hash(state) ^ (state.ply as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)) | 1;
+        let slot = &mut self.owner.ecache[key as usize & (ECACHE - 1)];
+        if slot.0 == key {
+            return slot.1;
+        }
+        let v = self.eval.evaluate(state, state.to_move);
+        *slot = (key, v);
+        v
+    }
+
     fn negamax(&mut self, state: &State, depth: u8, alpha: i32, beta: i32) -> Result<i32, Timeout> {
         if !self.owner.cfg.repeat || state.over || state.ply == self.root_ply {
             return self.negamax_inner(state, depth, alpha, beta);
@@ -629,7 +651,7 @@ impl Search<'_> {
         beta: i32,
         plies: u8,
     ) -> Result<i32, Timeout> {
-        let stand = self.eval.evaluate(state, state.to_move);
+        let stand = self.evaluate(state);
         if state.over || plies == 0 || stand >= beta {
             return Ok(stand);
         }
